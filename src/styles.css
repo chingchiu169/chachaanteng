@@ -1,0 +1,266 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────
+   daisyUI v5 — component classes (btn/input/select/badge/card/menu/…).
+   Two custom themes, switched via data-theme on <html> (same mechanism the
+   app already uses): llama-dark = pure-black base + Tokyo-blue accent;
+   llama-light = stock daisyUI "light" values verbatim.
+   ───────────────────────────────────────────────────────────────────────── */
+@plugin "daisyui";
+
+@plugin "daisyui/theme" {
+  name: "llama-dark";
+  default: true;
+  --color-base-100: #000000;
+  --color-base-200: #0a0a0a;
+  --color-base-300: #141414;
+  --color-base-content: #ced2dd;
+  --color-primary: #6c9bff;
+  --color-primary-content: #0a0e1a;
+  --color-secondary: #5cc8f0;
+  --color-secondary-content: #0a0e1a;
+  --color-accent: #b48efa;
+  --color-accent-content: #ffffff;
+  --color-neutral: #1e1e1e;
+  --color-neutral-content: #ced2dd;
+  --color-info: #5cc8f0;
+  --color-info-content: #0a0e1a;
+  --color-success: #6ee08a;
+  --color-success-content: #0a0e1a;
+  --color-warning: #f0c75e;
+  --color-warning-content: #0a0e1a;
+  --color-error: #ff6b8a;
+  --color-error-content: #ffffff;
+  --radius-selector: 0.375rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.625rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "llama-light";
+  /* stock daisyUI "light" theme values, verbatim */
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(98% 0 0);
+  --color-base-300: oklch(95% 0 0);
+  --color-base-content: oklch(21% 0.006 285.885);
+  --color-primary: oklch(45% 0.24 277.023);
+  --color-primary-content: oklch(93% 0.034 272.788);
+  --color-secondary: oklch(65% 0.241 354.308);
+  --color-secondary-content: oklch(94% 0.028 342.258);
+  --color-accent: oklch(77% 0.152 181.912);
+  --color-accent-content: oklch(38% 0.063 188.416);
+  --color-neutral: oklch(14% 0.005 285.823);
+  --color-neutral-content: oklch(92% 0.004 286.32);
+  --color-info: oklch(74% 0.16 232.661);
+  --color-info-content: oklch(29% 0.066 243.157);
+  --color-success: oklch(76% 0.177 163.223);
+  --color-success-content: oklch(37% 0.077 168.94);
+  --color-warning: oklch(82% 0.189 84.429);
+  --color-warning-content: oklch(41% 0.112 45.904);
+  --color-error: oklch(71% 0.194 13.428);
+  --color-error-content: oklch(27% 0.105 12.094);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.25rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Modal — daisyUI Method 1 (native <dialog class="modal">). Align the scrim
+   and box with the app palette: daisyUI's defaults are a fixed 40% black
+   scrim + base-100 box, which vanish on llama-dark. Unlayered rules win over
+   daisyUI's @layer'd ones.
+   ───────────────────────────────────────────────────────────────────────── */
+.modal[open],
+.modal:popover-open {
+    background-color: var(--scrim);
+}
+
+.modal-box {
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--line-strong);
+}
+
+/* Font stack — the only structural token still in use (body font-family). */
+:root {
+    --font: 'Inter', system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Palettes — two modes only (user decision 2026-09): dark + light. A mode is
+   nothing but its block; the dark one is listed under the bare :root as well
+   so it doubles as the fallback when no (or an unrecognised) data-theme is set.
+   ───────────────────────────────────────────────────────────────────────── */
+:root,
+:root[data-theme="llama-dark"] {
+    color-scheme: dark;
+    /* Pure-black neutral surface ramp (user decision 2026-09); accent stays Tokyo blue. */
+    --bg-base: #000000;
+    --bg-surface: #0a0a0a;
+    --bg-raised: #141414;
+    --bg-elevated: #1e1e1e;
+    --bg-hover: #232323;
+    --fg: #c8cef5;
+    --fg-muted: #8b91b0;
+    --fg-bright: #eaecf8;
+    --fg-faint: #6a7090;
+    --accent: #6c9bff;
+    /* --accent is the FILL. --accent-text is the same role applied to text and
+       icons; light themes must diverge (their accent fill is a dark neutral). */
+    --accent-text: var(--accent);
+    --accent-subtle: rgba(108, 155, 255, 0.12);
+    --accent-border: rgba(108, 155, 255, 0.28);
+    --green: #6ee08a;
+    --red: #ff6b8a;
+    --red-subtle: rgba(255, 107, 138, 0.12);
+    /* --yellow is WARNING only, sized to stay readable as text at 10-12px. */
+    --yellow: #f0c75e;
+    --cyan: #5cc8f0;
+    /* Line colors are named --line(-strong), NOT --border: daisyUI owns the
+       --border name as its border-WIDTH token (1px). Redefining it as a color
+       here made every `border: var(--border) solid …` declaration invalid and
+       silently dropped all component borders. */
+    --line: rgba(255, 255, 255, 0.06);
+    --line-strong: rgba(255, 255, 255, 0.10);
+
+    /* Full-viewport dim behind a modal. */
+    --scrim: rgba(0, 0, 0, 0.6);
+}
+
+/* Light — aligned with the stock daisyUI "light" theme (user decision 2026-09):
+   white cards on light-grey base, purple primary. Values mirror llama-light so
+   hand-rolled parts and daisyUI components share one look. */
+:root[data-theme="llama-light"] {
+    color-scheme: light;
+    --bg-base: oklch(95% 0 0);
+    --bg-surface: oklch(98% 0 0);
+    --bg-raised: oklch(100% 0 0);
+    --bg-elevated: oklch(100% 0 0);
+    --bg-hover: oklch(92% 0 0);
+    --fg: oklch(21% 0.006 285.885);
+    --fg-muted: oklch(45% 0.008 286);
+    --fg-bright: oklch(14% 0.005 285.823);
+    --fg-faint: oklch(60% 0.005 286);
+    /* Stock daisyUI light primary (purple). */
+    --accent: oklch(45% 0.24 277.023);
+    --accent-text: var(--accent);
+    --accent-subtle: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
+    --green: oklch(76% 0.177 163.223);
+    --red: oklch(71% 0.194 13.428);
+    --red-subtle: color-mix(in srgb, var(--red) 10%, transparent);
+    --yellow: oklch(65% 0.17 84.429);
+    --cyan: oklch(74% 0.16 232.661);
+    /* See the dark block above — must stay named --line(-strong), never --border. */
+    --line: rgba(23, 32, 54, 0.10);
+    --line-strong: rgba(23, 32, 54, 0.18);
+
+    --scrim: rgba(30, 40, 62, 0.45);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Tailwind v4 bridge — `inline` so utilities reference the palette vars
+   directly and re-resolve when [data-theme] changes at runtime. Only tokens
+   actually used by a utility are bridged (bg-X / text-X / border-X).
+   ───────────────────────────────────────────────────────────────────────── */
+@theme inline {
+    --color-base: var(--bg-base);
+    --color-surface: var(--bg-surface);
+    --color-raised: var(--bg-raised);
+    --color-elevated: var(--bg-elevated);
+    --color-hover: var(--bg-hover);
+
+    --color-fg: var(--fg);
+    --color-fg-muted: var(--fg-muted);
+    --color-fg-bright: var(--fg-bright);
+    --color-fg-faint: var(--fg-faint);
+
+    --color-accent: var(--accent);
+    --color-accent-text: var(--accent-text);
+    --color-accent-subtle: var(--accent-subtle);
+    --color-accent-border: var(--accent-border);
+
+    --color-green: var(--green);
+    --color-red: var(--red);
+    --color-red-subtle: var(--red-subtle);
+    --color-yellow: var(--yellow);
+    --color-cyan: var(--cyan);
+
+    --color-line: var(--line);
+    --color-line-strong: var(--line-strong);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--fg);
+  font-family: var(--font);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* daisyUI v5 animates .collapse via a grid-template-rows 0fr→1fr transition (~200ms).
+   Our sections conditionally mount their content, so during that animation every frame
+   re-lays-out and repaints everything below the section — visible jank when expanding
+   top-of-page sections (e.g. Model in ConfigureView) on slower machines. Toggles are
+   instant instead; collapse was already instant (content unmounts immediately). */
+.collapse {
+  transition: none;
+}
+.collapse > .collapse-content {
+  transition: none;
+}
+
+/* daisyUI v5 caps .chat-bubble at max-width:90% of its grid item. Our bubbles sit inside a
+   shrink-to-fit wrapper (col-start-2 max-w-[78%]) rather than directly in the grid, so the cap
+   resolves against the already-hugging wrapper and short messages wrap early ("Sure! What would
+   you like me to / do?"). The wrapper's own max-w bounds row width, so drop daisyUI's cap. */
+.chat .chat-bubble {
+  max-width: none;
+}
+
+/* App logo mark — black line art on transparent (public/logo.png). Dark is the fallback
+   theme, so invert to white by default and restore in llama-light. */
+.app-logo {
+    display: inline-block;
+    width: 1.2em;
+    height: 1.2em;
+    object-fit: contain;
+    vertical-align: -0.28em;
+    filter: invert(1);
+}
+:root[data-theme="llama-light"] .app-logo {
+    filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition-duration: 0s !important;
+        animation-duration: 0s !important;
+    }
+}

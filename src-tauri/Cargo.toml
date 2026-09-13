@@ -1,0 +1,36 @@
+[package]
+name = "chachaanteng"
+version = "0.1.0"
+description = "ChaChaanTeng - manage llama.cpp on Windows"
+edition = "2021"
+
+[lib]
+name = "chachaanteng_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "time", "sync", "net"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures-util = "0.3"
+zip = "2"
+sha2 = "0.10"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio-util = "0.7"
+base64 = "0.22"
+regex = "1"
+webbrowser = "1"
+chrono = { version = "0.4", features = ["clock"] }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
