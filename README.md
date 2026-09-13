@@ -9,7 +9,7 @@ A Windows desktop GUI for [llama.cpp](https://github.com/ggml-org/llama.cpp) —
 ## Features
 
 - **Engine management** — auto-detects hardware (nvidia-smi / PowerShell CIM), downloads the right llama.cpp Windows build (CUDA / Vulkan / CPU / SYCL) with SHA256 verification, multi-version coexistence, or point at your own binary
-- **Quick Launch & Configure** — one-click launch tabs, plus a full flag editor ported from the reference app's `definitions.js` (categories, presets, modified-from-default dots)
+- **Quick Launch & Configure** — one-click launch tabs, plus a full flag editor with categories, presets, and modified-from-default indicators
 - **Chat** — streaming markdown, thinking-effort control, collapsed reasoning, context capacity check, text/image attachments, web search (DDG / SearXNG), per-conversation server pick
 - **Models** — Hugging Face download with progress + cancel, publisher/arch/params metadata enrichment, display aliases, vision `.mmproj` pairing & cascade delete
 - **Benchmarks** — llama-bench and perplexity runners with history
@@ -45,7 +45,7 @@ The app downloads its own llama.cpp engine on first launch — no manual setup n
 ```
 src/                  React frontend
   components/         views: Chat, Models, Configure, QuickLaunch, Benchmarks, Monitor, Settings…
-  flags/              flag definitions + arg building (ported from reference JS)
+  flags/              flag definitions + arg building
   i18n/               en / zh-tw strings
   lib/                API bridge, monitor sync, model meta/aliases, themes
 src-tauri/src/        Rust core
