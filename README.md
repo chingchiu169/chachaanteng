@@ -17,7 +17,7 @@ A Windows desktop GUI for [llama.cpp](https://github.com/ggml-org/llama.cpp) —
 - **External servers** — register remote OpenAI-compatible endpoints; API keys encrypted in Windows Credential Manager (own wincred FFI)
 - **Cloudflare tunnel** — expose a local server over cloudflared
 - **Auto-update** — git-based engine/app update flow
-- 5 themes (dark fallback + light), English / 繁體中文 UI
+- Dark and Light theme, English / 繁體中文 UI
 
 ## Tech stack
 
