@@ -61,8 +61,3 @@ src-tauri/src/        Rust core
   hw.rs               hardware detection (nvidia-smi / CIM)
   system_stats.rs     CPU/RAM/disk + GPU telemetry
 ```
-
-## Docs
-
-- [REQUIREMENTS.md](REQUIREMENTS.md) — full requirements & reference-repo mapping (v2, Cantonese)
-- [server-readme.md](server-readme.md) — llama-server notes
