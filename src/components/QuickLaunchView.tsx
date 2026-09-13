@@ -622,13 +622,13 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
             // the toast only lives 2.5s — a disabled Start still explains itself on hover
             <div className="tooltip tooltip-top">
               <div className="tooltip-content">{result.error ?? ""}</div>
-              <button onClick={start} disabled={!canLaunch} className="btn btn-sm btn-primary">
+              <button onClick={start} disabled={!canLaunch} className="btn btn-xs btn-primary">
                 <i className="fa-solid fa-play" aria-hidden />
                 {t("ql.startServer")}
               </button>
             </div>
           ) : (
-            <button onClick={stop} className="btn btn-sm btn-soft btn-error">
+            <button onClick={stop} className="btn btn-xs btn-soft btn-error">
               <i className="fa-solid fa-stop" aria-hidden />
               {t("ql.stop")}
             </button>

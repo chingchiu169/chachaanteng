@@ -484,7 +484,7 @@ export default function BenchmarksView({ visible = false }: { visible?: boolean 
           )}
           <div className="flex gap-2 text-xs items-center flex-wrap">
             <span className={labelCls}>{t("bench.dataFile")}</span>
-            <button onClick={fetchWikitext} disabled={wikiBusy} className="btn btn-primary btn-sm">
+            <button onClick={fetchWikitext} disabled={wikiBusy} className="btn btn-primary btn-xs">
               {wikiBusy ? t("bench.downloading") : "WikiText-2"}
             </button>
             <button onClick={pickDataFile} className={secondaryBtn}>{t("common.browse")}</button>
@@ -605,13 +605,13 @@ export default function BenchmarksView({ visible = false }: { visible?: boolean 
         {!running ? (
           <div className="tooltip tooltip-top">
             <div className="tooltip-content">{result.error ?? ""}</div>
-            <button onClick={run} disabled={!canRun} className="btn btn-sm btn-primary">
+            <button onClick={run} disabled={!canRun} className="btn btn-xs btn-primary">
               <i className="fa-solid fa-play" aria-hidden />
               {benchmarkType === "bench" ? t("bench.runBenchmark") : t("bench.runPpl")}
             </button>
           </div>
         ) : (
-          <button onClick={stop} className="btn btn-sm btn-soft btn-error">
+          <button onClick={stop} className="btn btn-xs btn-soft btn-error">
             <i className="fa-solid fa-stop" aria-hidden />
             {t("bench.stop")}
           </button>

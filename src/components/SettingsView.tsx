@@ -526,7 +526,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
               <input type="number" value={tunPort} onChange={(e) => { tunPortEdited.current = true; setTunPort(Number(e.target.value)); }} className={`${inputCls} w-24`} />
             </label>
             {tunActive ? (
-              <button onClick={stopTunnel} className="btn btn-sm btn-soft btn-error">
+              <button onClick={stopTunnel} className="btn btn-xs btn-soft btn-error">
                 <i className="fa-solid fa-stop mr-1.5" aria-hidden />
                 {t("settings.stopTunnel")}
               </button>
@@ -641,7 +641,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
               )}
               {git.fetch_note && <p className="text-[11px] text-yellow">{git.fetch_note}</p>}
               <div className="flex gap-2">
-                <button onClick={checkGit} className="btn btn-sm">
+                <button onClick={checkGit} className="btn btn-xs">
                   {t("settings.checkUpdate")}
                 </button>
                 <button
@@ -673,7 +673,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
 
       {/* sticky footer — save is always visible (far right), content scrolls above it */}
       <div className="flex shrink-0 justify-end border-t border-line bg-surface px-3 py-2">
-        <button onClick={save} className={`btn btn-sm ${saved ? "btn-success" : "btn-primary"}`}>
+        <button onClick={save} className={`btn btn-xs ${saved ? "btn-success" : "btn-primary"}`}>
           {saved ? (
             <>
               <i className="fa-solid fa-check mr-1.5" aria-hidden />

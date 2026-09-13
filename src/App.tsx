@@ -29,7 +29,7 @@ function syncBinaryTag(engines: { path: string; version: string | null }[], pref
 type Tab = "chat" | "quicklaunch" | "logs" | "models" | "benchmarks" | "monitor" | "configure" | "settings";
 
 function tabCls(active: boolean) {
-  return `btn btn-sm w-full justify-start gap-2 shadow-none border ${
+  return `btn btn-xs w-full justify-start gap-2 shadow-none border ${
     active
       ? "bg-accent-subtle text-accent-text border-transparent font-medium"
       : "border-transparent bg-transparent text-fg-muted hover:bg-hover hover:text-fg-bright"

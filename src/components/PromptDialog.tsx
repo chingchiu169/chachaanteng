@@ -85,7 +85,7 @@ export default function PromptDialog({
             <button type="button" className="btn btn-ghost" onClick={() => ref.current?.close()}>
               {cancelLabel}
             </button>
-            <button type="submit" disabled={!value.trim()} className="btn btn-sm btn-primary">
+            <button type="submit" disabled={!value.trim()} className="btn btn-xs btn-primary">
               {submitLabel}
             </button>
           </div>

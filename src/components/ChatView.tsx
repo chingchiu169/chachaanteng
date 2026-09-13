@@ -892,7 +892,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
       {/* conversation sidebar */}
       {!focusMode && (
         <aside className="w-56 shrink-0 border-r border-line bg-surface flex flex-col">
-          <button onClick={newChat} className="m-2 btn btn-primary btn-sm w-[calc(100%-1rem)]">
+          <button onClick={newChat} className="m-2 btn btn-primary btn-xs w-[calc(100%-1rem)]">
             <i className="fa-solid fa-plus" aria-hidden />
             {t("chat.newChat")}
           </button>
