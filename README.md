@@ -4,7 +4,7 @@
   <img src="public/logo.png" width="96" alt="ChaChaanTeng logo" />
 </p>
 
-A Windows desktop GUI for [llama.cpp](https://github.com/ggml-org/llama.cpp) — run, chat with, and benchmark local LLMs. Built with **Tauri 2 + Rust + React**. Full port of [thomas9120/LLama-GUI](https://github.com/thomas9120/LLama-GUI) (Python backend + vanilla JS → Rust core + TypeScript frontend).
+A Windows desktop GUI for [llama.cpp](https://github.com/ggml-org/llama.cpp) — run, chat with, and benchmark local LLMs. Built with **Tauri 2 + Rust + React**.
 
 ## Features
 
