@@ -278,7 +278,9 @@ async fn probe_nvidia() -> Vec<GpuStats> {
         return Vec::new();
     };
 
-    let fut = tokio::process::Command::new(&exe)
+    let mut cmd = tokio::process::Command::new(&exe);
+    crate::util::hide_console_tokio(&mut cmd);
+    let fut = cmd
         .args([
             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
             "--format=csv,noheader,nounits",

@@ -26,6 +26,7 @@ pub struct HardwareInfo {
 
 async fn detect_nvidia() -> Vec<GpuInfo> {
     let mut cmd = Command::new("nvidia-smi");
+    crate::util::hide_console_tokio(&mut cmd);
     cmd.args([
         "--query-gpu=name,memory.total",
         "--format=csv,noheader,nounits",
@@ -72,6 +73,7 @@ async fn detect_system(nvidia_names: &[String]) -> (Vec<String>, bool, String, u
       ramGb = [double][math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 0)
     } | ConvertTo-Json -Compress -Depth 4"#;
     let mut cmd = Command::new("powershell");
+    crate::util::hide_console_tokio(&mut cmd);
     cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps])
         .kill_on_drop(true); // timeout below drops the command — kill the child with it
     let out = match timeout(PROBE_TIMEOUT, cmd.output()).await {

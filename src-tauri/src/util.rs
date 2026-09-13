@@ -1,5 +1,19 @@
 //! Small shared helpers used across several modules.
 
+/// Windows GUI apps have no console of their own, so without CREATE_NO_WINDOW every spawned
+/// console child (llama-server, nvidia-smi, taskkill…) gets its own visible window in release
+/// builds — dev mode hides it because children inherit the dev terminal's console.
+#[cfg(windows)]
+pub fn hide_console_tokio(cmd: &mut tokio::process::Command) {
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+}
+
+#[cfg(windows)]
+pub fn hide_console_std(cmd: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+}
+
 /// Push a line into a capped ring buffer, dropping the oldest lines past `cap`.
 pub fn push_capped(q: &std::sync::Mutex<std::collections::VecDeque<String>>, line: String, cap: usize) {
     if let Ok(mut q) = q.lock() {

@@ -177,13 +177,17 @@ async fn probe_process_gpu(pid: u32) -> (Option<f64>, Option<u64>) {
     };
 
     // Exact VRAM for this PID — CSV is trivially parseable.
-    let mem_fut = tokio::process::Command::new(&exe)
+    let mut mem_cmd = tokio::process::Command::new(&exe);
+    crate::util::hide_console_tokio(&mut mem_cmd);
+    let mem_fut = mem_cmd
         .args(["--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"])
         // don't leave an orphaned nvidia-smi behind when the 2 s timeout fires
         .kill_on_drop(true)
         .output();
     // Per-process SM utilization — pmon prints a fixed table; -c 1 = one sample.
-    let util_fut = tokio::process::Command::new(&exe)
+    let mut util_cmd = tokio::process::Command::new(&exe);
+    crate::util::hide_console_tokio(&mut util_cmd);
+    let util_fut = util_cmd
         .args(["pmon", "-c", "1", "-s", "u"])
         .kill_on_drop(true)
         .output();

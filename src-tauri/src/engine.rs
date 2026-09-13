@@ -54,9 +54,9 @@ pub fn kill_pid(pid: u32) {
         return;
     }
     // Windows-only app: taskkill is the reliable way to terminate a process tree
-    let _ = std::process::Command::new("taskkill")
-        .args(["/F", "/T", "/PID", &pid.to_string()])
-        .output();
+    let mut cmd = std::process::Command::new("taskkill");
+    crate::util::hide_console_std(&mut cmd);
+    let _ = cmd.args(["/F", "/T", "/PID", &pid.to_string()]).output();
 }
 
 /// Async-context variant of [kill_pid] — taskkill's duration is unbounded on a loaded system,
@@ -150,6 +150,7 @@ async fn spawn_server(
     args.push(port.to_string());
 
     let mut cmd = tokio::process::Command::new(&engine_exe);
+    crate::util::hide_console_tokio(&mut cmd);
     cmd.args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -340,7 +341,9 @@ fn parse_process_rows(json: &str) -> Vec<(u32, u16, String)> {
 fn enumerate_llama_server_processes() -> Vec<(u32, u16, String)> {
     // -InputObject forces ConvertTo-Json to emit an array even for a single row;
     // empty input prints nothing (handled below).
-    let out = match std::process::Command::new("powershell.exe")
+    let mut cmd = std::process::Command::new("powershell.exe");
+    crate::util::hide_console_std(&mut cmd);
+    let out = match cmd
         .args([
             "-NoProfile",
             "-NonInteractive",

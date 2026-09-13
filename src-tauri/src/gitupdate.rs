@@ -52,10 +52,11 @@ fn repo_root() -> Result<PathBuf, String> {
 }
 
 async fn run_git(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String, String> {
+    let mut cmd = tokio::process::Command::new("git");
+    crate::util::hide_console_tokio(&mut cmd);
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs),
-        tokio::process::Command::new("git")
-            .current_dir(repo)
+        cmd.current_dir(repo)
             .args(args)
             // never hang on a credential prompt in the GUI
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -183,8 +184,8 @@ pub async fn git_pull() -> Result<GitPullResult, String> {
 #[tauri::command]
 pub fn restart_app() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    std::process::Command::new(&exe)
-        .spawn()
-        .map_err(|e| format!("重新啟動失敗: {e}"))?;
+    let mut cmd = std::process::Command::new(&exe);
+    crate::util::hide_console_std(&mut cmd);
+    cmd.spawn().map_err(|e| format!("重新啟動失敗: {e}"))?;
     std::process::exit(0);
 }

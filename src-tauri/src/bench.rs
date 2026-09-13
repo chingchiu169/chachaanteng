@@ -77,6 +77,7 @@ pub async fn bench_start(
     }
 
     let mut cmd = tokio::process::Command::new(exe);
+    crate::util::hide_console_tokio(&mut cmd);
     cmd.args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());

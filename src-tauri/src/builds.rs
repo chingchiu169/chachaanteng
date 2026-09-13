@@ -598,6 +598,7 @@ pub async fn validate_custom_engine(path: String) -> Result<serde_json::Value, S
     }
     // A hostile/broken exe must not hang the settings dialog — cap the probe.
     let mut cmd = tokio::process::Command::new(&exe);
+    crate::util::hide_console_tokio(&mut cmd);
     cmd.arg("--version").kill_on_drop(true); // timeout below drops the command — kill the child with it
     let out = match tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output()).await {
         Ok(Ok(o)) => o,

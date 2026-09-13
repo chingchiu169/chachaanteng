@@ -171,6 +171,7 @@ pub async fn estimate_memory(engine_exe: String, args: Vec<String>) -> Result<se
     for _attempt in 0..64 {
         // A wedged fit binary must not hang the estimate UI — cap every attempt.
         let mut cmd = tokio::process::Command::new(&fitp);
+        crate::util::hide_console_tokio(&mut cmd);
         cmd.args(&cmd_args).kill_on_drop(true); // timeout below drops the command — kill the child with it
         let out = match tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output()).await {
             Ok(Ok(o)) => o,

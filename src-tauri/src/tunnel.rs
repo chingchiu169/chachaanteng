@@ -210,6 +210,7 @@ async fn run_tunnel(
     update(&st, Some("starting"), Some(&msg)).await;
 
     let mut cmd = Command::new(&bin);
+    crate::util::hide_console_tokio(&mut cmd);
     cmd.args(["tunnel", "--url", &format!("http://127.0.0.1:{port}")])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
