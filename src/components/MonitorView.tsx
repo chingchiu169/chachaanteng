@@ -383,7 +383,9 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
               <div className="flex items-center gap-2 text-xs">
                 <span className="font-mono text-green">port {s.port}</span>
                 <span className="text-fg-muted truncate" title={s.model}>{s.model}</span>
-                {s.busy && <span className="text-[11px] text-fg-faint animate-pulse">{t("mon.fetching")}</span>}
+                {/* Only while the panel has no data yet (first fetch after a server starts) — every 2 s
+                    poll tick sets busy, so keying on it alone would pulse "loading" forever. */}
+                {s.busy && s.metrics === null && <span className="text-[11px] text-fg-faint animate-pulse">{t("mon.fetching")}</span>}
               </div>
               {s.error && (
                 <div role="alert" className="alert alert-error">
