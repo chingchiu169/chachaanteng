@@ -31,6 +31,37 @@ function fmtGb(mib: number): string {
   return `${(mib / 1024).toFixed(1)} GB`;
 }
 
+/** Free-editing numeric field. A controlled `<input type="number">` snaps back on every invalid
+ *  intermediate state (you can't clear it, and retyping 8080 → 9999 means deleting down to one
+ *  digit first). This keeps a string draft while focused, commits valid numbers as you type, and
+ *  only snaps back to the committed value on blur. */
+function NumField({ value, onCommit, onClear, className = "w-24" }: {
+  value: number;
+  onCommit: (n: number) => void;
+  /** Called when the field is cleared and blurred — ctx/threads revert to their defaults. */
+  onClear?: () => void;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={draft ?? String(value)}
+      onChange={(e) => {
+        const v = e.target.value.replace(/\D/g, "").slice(0, 6);
+        setDraft(v);
+        if (v !== "") onCommit(Number(v));
+      }}
+      onBlur={() => {
+        if (draft === "") onClear?.();
+        setDraft(null);
+      }}
+      className={`${inputCls} ${className}`}
+    />
+  );
+}
+
 export default function QuickLaunchView({ visible = false }: { visible?: boolean }) {
   const t = useT();
   const { settings, engines, setSettings } = useApp();
@@ -214,12 +245,18 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
   };
 
   // --- tab actions -------------------------------------------------------------
+  // In-flight launch guard: a fast second click on Start would pass the duplicate-tab check
+  // above and hit Rust's registry check for the very port we just claimed — toasting "port
+  // occupied" for a launch that is actually succeeding.
+  const launching = useRef(false);
+
   const start = async () => {
-    if (!active) return;
+    if (!active || launching.current) return;
     if (tabs.some((x) => x.id !== active.id && x.port === active.port)) {
       pushToast(t("ql.portInUse", { port: active.port }));
       return;
     }
+    launching.current = true;
     try {
       stoppingPorts.current.delete(active.port); // clear any stale flag from a lost exit event
       await launchServer(active.engineExe, flatArgs, active.port);
@@ -233,6 +270,8 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
       }
     } catch (e) {
       pushToast(String(e));
+    } finally {
+      launching.current = false;
     }
   };
 
@@ -445,66 +484,58 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
           <div className="px-3 py-2 border-b border-line bg-surface space-y-2">
             <div className="text-xs font-medium text-fg-bright">{t("ql.quickParams")}</div>
             <div className="flex gap-3 text-xs items-center flex-wrap">
-              {/* per-tab port — overrides the Configure `port` flag for this tab */}
-              <span className={labelCls}>{t("ql.port")}</span>
-              <input
-                type="number"
-                value={String(active.port)}
-                min={1}
-                max={65535}
-                onChange={(e) => {
-                  const p = Number(e.target.value);
-                  if (p >= 1 && p <= 65535) patchTab(active.id, { port: p }); // 0/NaN would launch a doomed server
-                }}
-                className={`${inputCls} w-24`}
-              />
-              <span className={labelCls}>{t("ql.ctx")}</span>
-              <input
-                type="number"
-                value={String(active.values.ctx_size ?? 4096)}
-                onChange={(e) => {
-                  // Empty reverts to the default; 0 would crash llama-server at startup.
-                  if (e.target.value === "") return setActiveFlag("ctx_size", undefined);
-                  const n = Number(e.target.value);
-                  if (!Number.isFinite(n) || n < 1) return;
-                  setActiveFlag("ctx_size", n);
-                }}
-                className={`${inputCls} w-24`}
-              />
-              <span className={labelCls}>{t("ql.ngl")}</span>
-              <input
-                type="text"
-                value={String(active.values.gpu_layers ?? "auto")}
-                onChange={(e) => setActiveFlag("gpu_layers", e.target.value)}
-                placeholder="auto / all / 99"
-                className={`${inputCls} w-24`}
-              />
-              <span className={labelCls}>{t("ql.threads")}</span>
-              <input
-                type="number"
-                value={String(active.values.threads ?? -1)}
-                onChange={(e) => {
-                  // Empty reverts to auto (-1); 0 is not a valid thread count.
-                  if (e.target.value === "") return setActiveFlag("threads", undefined);
-                  const n = Number(e.target.value);
-                  if (!Number.isFinite(n) || n < 1) return;
-                  setActiveFlag("threads", n);
-                }}
-                className={`${inputCls} w-20`}
-              />
-              <span className={labelCls}>{t("ql.flashAttn")}</span>
-              <select
-                value={String(active.values.flash_attn ?? "auto")}
-                onChange={(e) => setActiveFlag("flash_attn", e.target.value)}
-                className={`${selectCls} w-24`}
-              >
-                <option value="auto">{t("common.auto")}</option>
-                <option value="on">{t("common.on")}</option>
-                <option value="off">{t("common.off")}</option>
-              </select>
-              {/* display alias for this tab's model — persisted per path, shared with the Models page */}
-              <span className={labelCls}>{t("ql.alias")}</span>
-              <ModelAliasInput path={active.model} disabled={!active.model} className="w-32" />
+              {/* Each label + field is wrapped so a wrap never separates the two. */}
+              <div className="flex items-center">
+                {/* per-tab port — overrides the Configure `port` flag for this tab */}
+                <span className={labelCls}>{t("ql.port")}</span>
+                <NumField
+                  key={`port-${active.id}`}
+                  value={active.port}
+                  onCommit={(p) => {
+                    if (p >= 1 && p <= 65535) patchTab(active.id, { port: p }); // 0/NaN would launch a doomed server
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className={labelCls}>{t("ql.ctx")}</span>
+                {/* Clearing + blur reverts to the default; 0 would crash llama-server at startup. */}
+                <NumField
+                  key={`ctx-${active.id}`}
+                  value={active.values.ctx_size ?? 4096}
+                  onCommit={(n) => {
+                    if (n >= 1) setActiveFlag("ctx_size", n);
+                  }}
+                  onClear={() => setActiveFlag("ctx_size", undefined)}
+                />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className={labelCls}>{t("ql.ngl")}</span>
+                <input
+                  type="text"
+                  value={String(active.values.gpu_layers ?? "auto")}
+                  onChange={(e) => setActiveFlag("gpu_layers", e.target.value)}
+                  placeholder="auto / all / 99"
+                  className={`${inputCls} w-24`}
+                />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className={labelCls}>{t("ql.threads")}</span>
+                {/* Clearing + blur reverts to auto (-1); 0 is not a valid thread count. */}
+                <NumField
+                  key={`t-${active.id}`}
+                  value={active.values.threads ?? -1}
+                  className="w-20"
+                  onCommit={(n) => {
+                    if (n >= 1) setActiveFlag("threads", n);
+                  }}
+                  onClear={() => setActiveFlag("threads", undefined)}
+                />
+              </div>
+              <div className="flex items-center gap-1.5">
+                {/* display alias for this tab's model — persisted per path, shared with the Models page */}
+                <span className={labelCls}>{t("ql.alias")}</span>
+                <ModelAliasInput path={active.model} disabled={!active.model} className="w-32" />
+              </div>
             </div>
           </div>
 
