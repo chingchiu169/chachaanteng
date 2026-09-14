@@ -470,14 +470,16 @@ fn extract_zips(app: &AppHandle, archives: &[PathBuf], staged: &Path) -> Result<
     Ok(())
 }
 
-/// Extract a .tar.gz flat into `staged` (the tar crate sanitizes entry paths).
+/// Extract a .tar.gz into `staged`, preserving the archive's directory structure (the tar
+/// crate sanitizes entry paths and creates parent dirs). Note: `Entry::unpack` would write
+/// every entry to `staged` itself — it takes the full target path, not a root.
 fn extract_tar_gz(archive: &Path, staged: &Path) -> Result<(), String> {
     let f = std::fs::File::open(archive).map_err(|e| e.to_string())?;
     let gz = flate2::read::GzDecoder::new(f);
     let mut t = tar::Archive::new(gz);
     for entry in t.entries().map_err(|e| e.to_string())? {
         let mut e = entry.map_err(|e| e.to_string())?;
-        e.unpack(staged).map_err(|e| e.to_string())?;
+        e.unpack_in(staged).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
