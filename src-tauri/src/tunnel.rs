@@ -19,7 +19,13 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 const RELEASE_API: &str = "https://api.github.com/repos/cloudflare/cloudflared/releases/latest";
-const ASSET_NAME: &str = "cloudflared-windows-amd64.exe";
+const ASSET_NAME: &str = if cfg!(windows) {
+    "cloudflared-windows-amd64.exe"
+} else {
+    "cloudflared-darwin-arm64"
+};
+/// Local binary name (no .exe on macOS).
+const BIN_NAME: &str = if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" };
 /// Keep only the most recent N stderr lines in memory (the UI shows a tail).
 const LOG_LIMIT: usize = 200;
 
@@ -38,7 +44,7 @@ pub struct TunnelState {
     pub url: String,
     pub message: String,
     pub log: Vec<String>,
-    /// PID of the running cloudflared (taskkill /F /T on stop/exit) — None when not running.
+    /// PID of the running cloudflared (killed via kill_pid on stop/exit) — None when not running.
     child_pid: Option<u32>,
     cancel: Option<CancellationToken>,
 }
@@ -91,7 +97,7 @@ async fn update(st: &tokio::sync::Mutex<TunnelState>, status: Option<&str>, mess
     }
 }
 
-/// Locate cloudflared.exe under app_data/cloudflared/, downloading + SHA-256 verifying on first use.
+/// Locate the cloudflared binary under app_data/cloudflared/, downloading + SHA-256 verifying on first use.
 async fn ensure_cloudflared(
     st: &tokio::sync::Mutex<TunnelState>,
     data_dir: &Path,
@@ -99,7 +105,7 @@ async fn ensure_cloudflared(
 ) -> Result<PathBuf, String> {
     let dir = data_dir.join("cloudflared");
     tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("無法建立 cloudflared 目錄: {e}"))?;
-    let bin = dir.join("cloudflared.exe");
+    let bin = dir.join(BIN_NAME);
     if bin.exists() {
         return Ok(bin);
     }
@@ -183,7 +189,13 @@ async fn ensure_cloudflared(
     }
     tokio::fs::rename(&staging, &bin)
         .await
-        .map_err(|e| format!("move cloudflared.exe 失敗: {e}"))?;
+        .map_err(|e| format!("move {BIN_NAME} 失敗: {e}"))?;
+    // Don't rely on the downloaded file's mode bits — cloudflared must be executable.
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = tokio::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).await;
+    }
     Ok(bin)
 }
 

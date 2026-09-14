@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 
 const REPO_API: &str = "https://api.github.com/repos/ggml-org/llama.cpp";
 
-/// Windows backend matrix — mirrors the reference `build_backend_specs` (win32).
+/// One installable backend: which archive(s) to fetch and where they land.
 struct BackendSpec {
     key: &'static str,
     label: &'static str,
@@ -61,12 +61,34 @@ const WIN_ARM64_SPECS: &[BackendSpec] = &[BackendSpec {
     extra_assets: &[],
 }];
 
-/// `arch` is `std::env::consts::ARCH` — "aarch64" on ARM64 Windows, not "arm64".
-fn specs_for(arch: &str) -> &'static [BackendSpec] {
-    if arch == "aarch64" {
-        WIN_ARM64_SPECS
+// macOS tarballs nest everything under a top-level "llama-<tag>/" dir — extract_and_swap flattens it.
+const MAC_ARM64_SPECS: &[BackendSpec] = &[BackendSpec {
+    key: "metal",
+    label: "Metal (Apple GPU)",
+    asset: "llama-{tag}-bin-macos-arm64.tar.gz",
+    extra_assets: &[],
+}];
+
+const MAC_X64_SPECS: &[BackendSpec] = &[BackendSpec {
+    key: "cpu",
+    label: "CPU (Intel)",
+    asset: "llama-{tag}-bin-macos-x64.tar.gz",
+    extra_assets: &[],
+}];
+
+/// Backend matrix for this machine — Windows picks by arch; macOS ships per-arch tarballs.
+fn specs_for() -> &'static [BackendSpec] {
+    if cfg!(windows) {
+        // `ARCH` is "aarch64" on ARM64 Windows, not "arm64".
+        if std::env::consts::ARCH == "aarch64" {
+            WIN_ARM64_SPECS
+        } else {
+            WIN_X64_SPECS
+        }
+    } else if std::env::consts::ARCH == "aarch64" {
+        MAC_ARM64_SPECS
     } else {
-        WIN_X64_SPECS
+        MAC_X64_SPECS
     }
 }
 
@@ -146,11 +168,15 @@ async fn fetch_release(client: &reqwest::Client, tag: &str) -> Result<GhRelease,
     resp.json::<GhRelease>().await.map_err(|e| e.to_string())
 }
 
-fn has_win_assets(r: &GhRelease) -> bool {
-    r.assets.iter().any(|a| {
-        let n = a.name.to_lowercase();
-        n.contains("-bin-win-") || (n.contains("-win-") && n.ends_with(".zip"))
-    })
+fn has_platform_assets(r: &GhRelease) -> bool {
+    if cfg!(windows) {
+        r.assets.iter().any(|a| {
+            let n = a.name.to_lowercase();
+            n.contains("-bin-win-") || (n.contains("-win-") && n.ends_with(".zip"))
+        })
+    } else {
+        r.assets.iter().any(|a| a.name.to_lowercase().contains("-bin-macos-"))
+    }
 }
 
 /// The 30 most recent llama.cpp releases, newest first.
@@ -169,13 +195,13 @@ async fn fetch_recent_releases(client: &reqwest::Client) -> Result<Vec<GhRelease
 
 /// llama.cpp occasionally publishes marker releases (e.g. v0.4.0 carrying only
 /// nightly-tag.txt) that GitHub's /releases/latest returns; the real binaries live
-/// on bNNNN tags. Walk recent releases until one actually ships Windows zips.
+/// on bNNNN tags. Walk recent releases until one actually ships this platform's archives.
 async fn fetch_latest_usable_release(client: &reqwest::Client) -> Result<GhRelease, String> {
     let releases = fetch_recent_releases(client).await?;
     releases
         .into_iter()
-        .find(|r| has_win_assets(r))
-        .ok_or_else(|| "最近 30 個 release 都搵唔到 Windows binary".to_string())
+        .find(|r| has_platform_assets(r))
+        .ok_or_else(|| "最近 30 個 release 都搵唔到呢個平台嘅 binary".to_string())
 }
 
 #[derive(Serialize, Clone)]
@@ -184,20 +210,24 @@ pub struct EngineVersion {
     pub tag: String,
 }
 
-/// Recent llama.cpp releases that ship Windows binaries (newest first) — for the Engine settings tab.
+/// Recent llama.cpp releases that ship this platform's binaries (newest first) — for the Engine settings tab.
 #[tauri::command]
 pub async fn list_engine_versions() -> Result<Vec<EngineVersion>, String> {
     let client = crate::util::http_client(std::time::Duration::from_secs(30))?;
     Ok(fetch_recent_releases(&client)
         .await?
         .into_iter()
-        .filter(|r| has_win_assets(r))
+        .filter(|r| has_platform_assets(r))
         .take(25)
         .map(|r| EngineVersion { tag: r.tag_name })
         .collect())
 }
 
 fn recommend_for(hw: &HardwareInfo, spec: &BackendSpec) -> bool {
+    if !cfg!(windows) {
+        // macOS: the Metal build is the only (and best) choice on Apple Silicon.
+        return spec.key == "metal";
+    }
     if !hw.nvidia_gpus.is_empty() {
         // 12.4 has the widest driver compatibility; 13.3 needs newer drivers
         spec.key == "cuda-12.4"
@@ -214,7 +244,7 @@ fn builds_from_release(hw: &HardwareInfo, release: &GhRelease) -> Vec<BuildAsset
         release.assets.iter().map(|a| (a.name.as_str(), a)).collect();
 
     let mut out = Vec::new();
-    for spec in specs_for(&hw.arch) {
+    for spec in specs_for() {
         let main_name = spec.asset.replace("{tag}", tag);
         let Some(main) = asset_map.get(main_name.as_str()) else {
             continue; // this release doesn't ship that backend — skip silently
@@ -337,6 +367,70 @@ fn extract_and_swap(
     let _ = std::fs::remove_dir_all(staged);
     std::fs::create_dir_all(staged).map_err(|e| e.to_string())?;
 
+    if archives.iter().all(|a| is_zip_archive(a)) {
+        extract_zips(app, archives, staged)?;
+    } else {
+        // macOS tarballs — no cheap entry count, so progress is per-archive.
+        for archive in archives {
+            let name = archive
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            extract_tar_gz(archive, staged).map_err(|e| format!("解壓失敗 ({name}): {e}"))?;
+            emit_progress(app, "extracting", 0, None, &name);
+        }
+    }
+
+    let server_bin = crate::util::bin_name("llama-server");
+    #[cfg(not(windows))]
+    if !staged.join(&server_bin).exists() {
+        // macOS tarballs nest everything under a top-level "llama-<tag>/" dir — flatten it so the
+        // swap logic below sees the binaries at the staging root.
+        flatten_staging(staged)?;
+    }
+    if !staged.join(&server_bin).exists() {
+        return Err(format!("解壓完成但搵唔到 {server_bin}"));
+    }
+
+    // macOS: don't rely on tar mode bits — make the known tools executable.
+    #[cfg(not(windows))]
+    for tool in ["llama-server", "llama-bench", "llama-perplexity", "llama-fit-params"] {
+        let bin = staged.join(tool);
+        if bin.exists() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    let parent = staged.parent().ok_or("內部路徑錯誤")?;
+    let dir_name = final_dir.file_name().unwrap().to_string_lossy().to_string();
+    let old = parent.join(format!("{dir_name}.old"));
+    if old.exists() {
+        let _ = std::fs::remove_dir_all(&old);
+    }
+    let had_prev = final_dir.exists();
+    if had_prev {
+        std::fs::rename(final_dir, &old).map_err(|e| format!("備份舊安裝失敗: {e}"))?;
+    }
+    if let Err(e) = std::fs::rename(staged, final_dir) {
+        // put the old install back — a failed update must never leave the user without an engine
+        if had_prev {
+            let _ = std::fs::rename(&old, final_dir);
+        }
+        return Err(format!("替換安裝目錄失敗: {e}"));
+    }
+    if had_prev {
+        let _ = std::fs::remove_dir_all(&old);
+    }
+    Ok(final_dir.join(server_bin))
+}
+
+fn is_zip_archive(p: &Path) -> bool {
+    p.extension().map(|e| e.eq_ignore_ascii_case("zip")).unwrap_or(false)
+}
+
+/// Extract every zip archive flat into `staged` with a file-count progress bar.
+fn extract_zips(app: &AppHandle, archives: &[PathBuf], staged: &Path) -> Result<(), String> {
     // total entry count across all archives (central directory only — cheap) for the progress bar
     let counts: Vec<usize> = archives
         .iter()
@@ -373,32 +467,40 @@ fn extract_and_swap(
             }
         }
     }
+    Ok(())
+}
 
-    if !staged.join("llama-server.exe").exists() {
-        return Err("解壓完成但搵唔到 llama-server.exe".into());
+/// Extract a .tar.gz flat into `staged` (the tar crate sanitizes entry paths).
+fn extract_tar_gz(archive: &Path, staged: &Path) -> Result<(), String> {
+    let f = std::fs::File::open(archive).map_err(|e| e.to_string())?;
+    let gz = flate2::read::GzDecoder::new(f);
+    let mut t = tar::Archive::new(gz);
+    for entry in t.entries().map_err(|e| e.to_string())? {
+        let mut e = entry.map_err(|e| e.to_string())?;
+        e.unpack(staged).map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
 
-    let parent = staged.parent().ok_or("內部路徑錯誤")?;
-    let dir_name = final_dir.file_name().unwrap().to_string_lossy().to_string();
-    let old = parent.join(format!("{dir_name}.old"));
-    if old.exists() {
-        let _ = std::fs::remove_dir_all(&old);
+/// Move the direct children of staging's single subdirectory up to the staging root. Fails
+/// clearly if no single sub-dir holds the server binary (defensive — don't guess layouts).
+#[cfg(not(windows))]
+fn flatten_staging(staged: &Path) -> Result<(), String> {
+    let mut subs: Vec<PathBuf> = std::fs::read_dir(staged)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    if subs.len() != 1 {
+        return Err("解壓結構唔預期（搵唔到單一頂層目錄）".into());
     }
-    let had_prev = final_dir.exists();
-    if had_prev {
-        std::fs::rename(final_dir, &old).map_err(|e| format!("備份舊安裝失敗: {e}"))?;
+    let sub = subs.pop().unwrap();
+    for e in std::fs::read_dir(&sub).map_err(|e| e.to_string())?.flatten() {
+        std::fs::rename(e.path(), staged.join(e.file_name())).map_err(|e| e.to_string())?;
     }
-    if let Err(e) = std::fs::rename(staged, final_dir) {
-        // put the old install back — a failed update must never leave the user without an engine
-        if had_prev {
-            let _ = std::fs::rename(&old, final_dir);
-        }
-        return Err(format!("替換安裝目錄失敗: {e}"));
-    }
-    if had_prev {
-        let _ = std::fs::remove_dir_all(&old);
-    }
-    Ok(final_dir.join("llama-server.exe"))
+    std::fs::remove_dir_all(&sub).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Refuse while any registered server runs from this exe (its args_preview starts with the path).
@@ -424,15 +526,11 @@ pub async fn install_build(
     tag: String,
     backend: String,
 ) -> Result<String, String> {
-    // Both lists carry a "cpu" key, so chain this machine's arch first — a flat chain would
-    // always resolve to the x64 spec and hand ARM64 machines an x64 binary.
-    let spec = if std::env::consts::ARCH == "aarch64" {
-        WIN_ARM64_SPECS.iter().chain(WIN_X64_SPECS.iter())
-    } else {
-        WIN_X64_SPECS.iter().chain(WIN_ARM64_SPECS.iter())
-    }
-    .find(|s| s.key == backend)
-    .ok_or_else(|| format!("未知 backend: {backend}"))?;
+    // Each OS has its own matrix — a backend key from the wrong OS is an unknown-backend error.
+    let spec = specs_for()
+        .iter()
+        .find(|s| s.key == backend)
+        .ok_or_else(|| format!("未知 backend: {backend}"))?;
 
     let client = crate::util::http_client_streaming(std::time::Duration::from_secs(120))?;
     let release = fetch_release(&client, &tag).await?;
@@ -465,7 +563,10 @@ pub async fn install_build(
     let final_dir = root.join(&dir_name);
 
     // Refuse while a server runs from this exe — the swap below renames the live install dir away.
-    let exe_lc = final_dir.join("llama-server.exe").to_string_lossy().to_lowercase();
+    let exe_lc = final_dir
+        .join(crate::util::bin_name("llama-server"))
+        .to_string_lossy()
+        .to_lowercase();
     assert_engine_free(&state, &exe_lc).await?;
 
     let staged = root.join(format!("{dir_name}.new"));
@@ -519,12 +620,13 @@ pub async fn install_build(
 #[tauri::command]
 pub async fn list_installed_engines(app: AppHandle) -> Result<Vec<EngineInfo>, String> {
     let root = engines_root(&app)?;
+    let server_bin = crate::util::bin_name("llama-server");
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&root) {
         for e in rd.flatten() {
             let p = e.path();
             // skip staging leftovers like "b7184-cuda-12.4.new" / ".old"
-            if !p.is_dir() || !p.join("llama-server.exe").exists() {
+            if !p.is_dir() || !p.join(&server_bin).exists() {
                 continue;
             }
             let Some(file_name) = p.file_name() else {
@@ -533,7 +635,7 @@ pub async fn list_installed_engines(app: AppHandle) -> Result<Vec<EngineInfo>, S
             let name = file_name.to_string_lossy().to_string();
             out.push(EngineInfo {
                 version: parse_dir_version(&name),
-                path: p.join("llama-server.exe").display().to_string(),
+                path: p.join(&server_bin).display().to_string(),
                 name,
             });
         }
@@ -587,14 +689,15 @@ fn parse_dir_version(name: &str) -> Option<String> {
     Some(name[..i].to_string())
 }
 
-/// Probe a user-provided llama-server.exe (or the folder containing it): run `--version`
+/// Probe a user-provided llama-server (or the folder containing it): run `--version`
 /// and parse the build number. Returns the resolved exe path so the UI can store it.
 #[tauri::command]
 pub async fn validate_custom_engine(path: String) -> Result<serde_json::Value, String> {
     let p = PathBuf::from(&path);
-    let exe = if p.is_dir() { p.join("llama-server.exe") } else { p };
+    let server_bin = crate::util::bin_name("llama-server");
+    let exe = if p.is_dir() { p.join(&server_bin) } else { p };
     if !exe.is_file() {
-        return Err(format!("搵唔到 llama-server.exe: {}", exe.display()));
+        return Err(format!("搵唔到 {server_bin}: {}", exe.display()));
     }
     // A hostile/broken exe must not hang the settings dialog — cap the probe.
     let mut cmd = tokio::process::Command::new(&exe);
