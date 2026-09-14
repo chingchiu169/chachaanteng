@@ -39,7 +39,7 @@ function tabCls(active: boolean) {
 export default function App() {
   const [phase, setPhase] = useState<"loading" | "onboarding" | "main">("loading");
   const [tab, setTab] = useState<Tab>("chat");
-  const { settings, engines, setSettings, setEngines } = useApp();
+  const { setSettings, setEngines } = useApp();
   const t = useT();
 
   const load = async () => {

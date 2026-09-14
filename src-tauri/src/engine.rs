@@ -54,7 +54,7 @@ pub fn kill_pid(pid: u32) {
     if pid == 0 {
         return;
     }
-    // Windows-only app: taskkill is the reliable way to terminate a process tree
+    // taskkill /T terminates the whole process tree — the reliable way on Windows
     let mut cmd = std::process::Command::new("taskkill");
     crate::util::hide_console_std(&mut cmd);
     let _ = cmd.args(["/F", "/T", "/PID", &pid.to_string()]).output();

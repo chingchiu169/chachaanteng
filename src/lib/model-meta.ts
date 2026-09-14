@@ -3,7 +3,7 @@ import type { HfModelInfo } from "../types";
 import { hfModelInfo, saveSettings } from "./api";
 
 /** Persist fetched repo info for a downloaded model (keyed by absolute path; sparse). */
-export async function saveModelMeta(path: string, meta: HfModelInfo): Promise<void> {
+async function saveModelMeta(path: string, meta: HfModelInfo): Promise<void> {
   const s = useApp.getState().settings;
   if (!s) return;
   const next = { ...s, model_meta: { ...(s.model_meta ?? {}), [path]: meta } };
