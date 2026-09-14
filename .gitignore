@@ -5,3 +5,5 @@ src-tauri/target/
 .DS_Store
 .claude/settings.local.json
 REQUIREMENTS.md
+# Tauri-generated capability schemas (regenerated on every build)
+src-tauri/gen/
