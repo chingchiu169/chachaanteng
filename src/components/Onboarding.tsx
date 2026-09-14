@@ -17,6 +17,7 @@ import { useT } from "../i18n";
 import type { EnKey } from "../i18n/en";
 import Progress from "./Progress";
 import { inputCls } from "../lib/ui";
+import { isMac } from "../lib/platform";
 
 const fmtMb = (n: number) => (n / 1_048_576).toFixed(1);
 
@@ -27,6 +28,8 @@ function backendBadge(backend: string) {
     return <span className="badge badge-sm badge-accent badge-soft">Vulkan</span>;
   if (backend === "sycl")
     return <span className="badge badge-sm badge-info badge-soft">SYCL</span>;
+  if (backend === "metal")
+    return <span className="badge badge-sm badge-secondary badge-soft">Metal</span>;
   return <span className="badge badge-sm badge-soft">CPU</span>;
 }
 
@@ -305,7 +308,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
                   <input
                     value={customPath}
                     onChange={(e) => setCustomPath(e.target.value)}
-                    placeholder={t("ob.customPh")}
+                    placeholder={t(isMac() ? "ob.customPhMac" : "ob.customPh")}
                     className={`${inputCls} flex-1`}
                   />
                   <button

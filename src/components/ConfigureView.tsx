@@ -7,6 +7,7 @@ import { useFlags } from "../store-flags";
 import { effectiveFor, useScopes } from "../store-scopes";
 import { getModelsDirInfo, listLocalModels } from "../lib/api";
 import { modelDisplayName } from "../lib/model-aliases";
+import { isMac } from "../lib/platform";
 import { useApp } from "../store";
 import { useCatName, useFlagText, useT } from "../i18n";
 
@@ -233,7 +234,7 @@ export default function ConfigureView({ visible = false }: { visible?: boolean }
         const list = await listLocalModels(info.models_dir);
         if (!alive) return;
         setLocalModels(
-          list.map((f) => `${info.models_dir}/${f.rel_path}`.replace(/\//g, "\\")),
+          list.map((f) => `${info.models_dir}/${f.rel_path}`.replace(/\//g, isMac() ? "/" : "\\")),
         );
       } catch {
         /* non-fatal — scope list just misses local files */

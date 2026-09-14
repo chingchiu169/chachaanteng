@@ -6,6 +6,7 @@ import { useMonitor, type Sample } from "../store-monitor";
 import { refreshServers } from "../lib/monitor-sync";
 import { fmtClock } from "../lib/time";
 import { parsePrometheus } from "../lib/prometheus";
+import { isMac } from "../lib/platform";
 import { ghostBtn } from "../lib/ui";
 
 const POLL_MS = 2000; // matches the Rust-side cache TTL — every tick gets a fresh sample (system stats only)
@@ -241,7 +242,8 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
         )}
       </div>
 
-      {/* GPU */}
+      {!isMac() && (
+      /* GPU — hidden on macOS (no Apple-GPU telemetry in v1) */
       <div className="p-3 border-b border-line bg-surface space-y-2">
         <span className="text-xs font-medium text-fg-bright">{t("mon.gpuTitle")}</span>
         {!stats || stats.gpus.length === 0 ? (
@@ -283,6 +285,7 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
           </div>
         )}
       </div>
+      )}
 
       {/* FR6.3 — live server metrics */}
       <div className="p-3 border-b border-line bg-surface space-y-2">

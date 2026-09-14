@@ -26,6 +26,7 @@ import { useApp } from "../store";
 import { useI18n, useT } from "../i18n";
 import type { EnKey } from "../i18n/en";
 import { useThemeMode, type Mode } from "../lib/themes";
+import { isMac } from "../lib/platform";
 import { inputCls, raisedBtn, selectCls } from "../lib/ui";
 
 const TUNNEL_ACTIVE = ["preparing", "downloading", "starting", "running"];
@@ -69,7 +70,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
   // Engine tab — version download + installed engines
   const [versions, setVersions] = useState<EngineVersion[]>([]);
   const [selTag, setSelTag] = useState("");
-  const [selBackend, setSelBackend] = useState("cpu");
+  const [selBackend, setSelBackend] = useState(isMac() ? "metal" : "cpu");
   const [installing, setInstalling] = useState(false);
   const [buildProg, setBuildProg] = useState<{ phase: string; received: number; total: number | null; file?: string } | null>(null);
   const [engErr, setEngErr] = useState("");
@@ -407,7 +408,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
           <input
             value={engineExe}
             onChange={(e) => setEngineExe(e.target.value)}
-            placeholder={t("settings.enginePathPh")}
+            placeholder={t(isMac() ? "settings.enginePathPhMac" : "settings.enginePathPh")}
             className={`${inputCls} w-full`}
           />
         </section>
@@ -429,11 +430,17 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
             <label className="text-xs text-fg-muted flex items-center gap-1.5">
               {t("settings.backend")}
               <select value={selBackend} onChange={(e) => setSelBackend(e.target.value)} disabled={installing} className={`${selectCls} w-52`}>
-                <option value="cpu">CPU</option>
-                <option value="cuda-12.4">CUDA 12.4 (NVIDIA)</option>
-                <option value="cuda-13.3">CUDA 13.3 (NVIDIA)</option>
-                <option value="vulkan">Vulkan (AMD / Intel / NVIDIA)</option>
-                <option value="sycl">SYCL (Intel Arc)</option>
+                {isMac() ? (
+                  <option value="metal">Metal (Apple GPU)</option>
+                ) : (
+                  <>
+                    <option value="cpu">CPU</option>
+                    <option value="cuda-12.4">CUDA 12.4 (NVIDIA)</option>
+                    <option value="cuda-13.3">CUDA 13.3 (NVIDIA)</option>
+                    <option value="vulkan">Vulkan (AMD / Intel / NVIDIA)</option>
+                    <option value="sycl">SYCL (Intel Arc)</option>
+                  </>
+                )}
               </select>
             </label>
             <button onClick={doInstall} disabled={!selTag || installing} className="btn btn-primary btn-xs">

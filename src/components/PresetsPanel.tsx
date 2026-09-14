@@ -16,6 +16,7 @@ import { basePort } from "../store-scopes";
 import { useApp } from "../store";
 import { useFlags } from "../store-flags";
 import { useT } from "../i18n";
+import { isMac } from "../lib/platform";
 import { secondaryBtn, selectCls } from "../lib/ui";
 
 /** What a preset captures — enough to reproduce a launch configuration. */
@@ -203,9 +204,11 @@ export default function PresetsPanel({ onApply, currentPort }: Props) {
         <button onClick={requestDelete} disabled={!selectedPreset} className={secondaryBtn}>
           {t("common.delete")}
         </button>
-        <button onClick={exportShortcut} disabled={!selectedPreset} title={t("presets.exportTitle")} className={secondaryBtn}>
-          {t("presets.exportCmd")}
-        </button>
+        {!isMac() && (
+          <button onClick={exportShortcut} disabled={!selectedPreset} title={t("presets.exportTitle")} className={secondaryBtn}>
+            {t("presets.exportCmd")}
+          </button>
+        )}
         <label className="flex items-center gap-1.5 text-xs text-fg-muted ml-auto cursor-pointer">
           <input
             type="checkbox"

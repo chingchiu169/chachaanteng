@@ -5,6 +5,7 @@
 import { FLAGS } from "./definitions";
 import type { FlagDef, FlagValues } from "./types";
 import { flattenArgs, quoteArg, redactSensitiveTokens, shouldOmitLegacyLoadFlag } from "./core";
+import { isMac } from "../lib/platform";
 
 /** Flag ids the benchmark tools actually understand (everything else is excluded).
  *  HF source flags are deliberately absent — they're dropped earlier in buildBenchmarkArgs. */
@@ -287,7 +288,7 @@ export function buildBenchmarkArgs(options: BenchBuildOptions): BenchBuildResult
   }
 
   const flat = flattenArgs(args);
-  const command = [`${tool}.exe`, ...redactSensitiveTokens(flat)].map(quoteArg).join(" ");
+  const command = [isMac() ? tool : `${tool}.exe`, ...redactSensitiveTokens(flat)].map(quoteArg).join(" ");
   return { tool, args: flat, applied, excluded, error: null, command };
 }
 

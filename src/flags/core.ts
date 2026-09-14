@@ -4,6 +4,7 @@
 
 import { FLAGS } from "./definitions";
 import type { FlagDef, FlagValues } from "./types";
+import { isMac } from "../lib/platform";
 
 export type Tool = "llama-server" | "llama-cli";
 
@@ -588,7 +589,7 @@ export function buildLaunchArgs(
 /** Flatten + redact + quote into a copyable command line for the preview box. */
 export function renderCommand(tool: Tool, result: LaunchArgsResult): string {
   const launchTokens = flattenArgs(result.args);
-  const binary = `${tool}.exe`; // Windows-only app
+  const binary = isMac() ? tool : `${tool}.exe`;
   const parts = [binary, ...redactSensitiveTokens(launchTokens)];
   return parts.map(quoteArg).join(" ");
 }

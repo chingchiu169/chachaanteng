@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { stopServer } from "../lib/api";
 import { modelDisplayName } from "../lib/model-aliases";
+import { isMac } from "../lib/platform";
 import { useT } from "../i18n";
 import { useApp } from "../store";
 import { useMonitor, type ServerPanel } from "../store-monitor";
@@ -104,8 +105,12 @@ function ServerCard({ tab, panel }: { tab: QlTab; panel: ServerPanel | undefined
           <Row label={t("side.tokenAvg")} value={fmtTokS(panel?.predAvgTokS ?? null)} />
           <Row label="CPU" value={panel ? (panel.cpuPercent === null ? "—" : `${panel.cpuPercent.toFixed(1)}%`) : "—"} />
           <Row label="RAM" value={panel && panel.ramBytes > 0 ? fmtBytes(panel.ramBytes) : "—"} />
-          <Row label="GPU" value={panel?.gpuUtilPercent === null || panel?.gpuUtilPercent === undefined ? "—" : `${Math.round(panel.gpuUtilPercent)}%`} />
-          <Row label="VRAM" value={panel && panel.gpuMemBytes !== null ? fmtBytes(panel.gpuMemBytes) : "—"} />
+          {!isMac() && (
+            <>
+              <Row label="GPU" value={panel?.gpuUtilPercent === null || panel?.gpuUtilPercent === undefined ? "—" : `${Math.round(panel.gpuUtilPercent)}%`} />
+              <Row label="VRAM" value={panel && panel.gpuMemBytes !== null ? fmtBytes(panel.gpuMemBytes) : "—"} />
+            </>
+          )}
         </div>
       )}
       {!expanded && (

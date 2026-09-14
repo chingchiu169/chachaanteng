@@ -10,6 +10,7 @@ import {
 import ConfirmDialog from "./ConfirmDialog";
 import { useT } from "../i18n";
 import { inputCls, labelCls, secondaryBtn } from "../lib/ui";
+import { isMac } from "../lib/platform";
 
 const MAX_LABEL = 120; // mirrors MAX_LABEL_LENGTH in src-tauri/src/external.rs
 const MAX_KEY = 1024; // mirrors MAX_API_KEY_LENGTH there
@@ -162,7 +163,7 @@ export default function ExtServersPanel({ visible = false }: { visible?: boolean
             {t("settings.extTitle")}
           </div>
           <p className="text-[11px] text-fg-muted mt-0.5">
-            {t("settings.extHelp")}
+            {t(isMac() ? "settings.extHelpMac" : "settings.extHelp")}
           </p>
         </div>
         {draft === null && (

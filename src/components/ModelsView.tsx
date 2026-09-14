@@ -28,6 +28,7 @@ import Progress from "./Progress";
 import { useT } from "../i18n";
 
 import { fetchAndSaveModelMeta } from "../lib/model-meta";
+import { isMac } from "../lib/platform";
 import { inputCls, secondaryBtn, selectCls } from "../lib/ui";
 
 const btnCls = "btn btn-primary btn-xs disabled:opacity-40";
@@ -214,9 +215,9 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
   // download progress (event-driven)
   const [dl, setDl] = useState<HfDownloadState | null>(null);
 
-  /** rel_path comes back with forward slashes — normalize to native separators. */
+  /** rel_path comes back with forward slashes — normalize to native separators (no-op on macOS). */
   const absPath = useCallback(
-    (rel: string) => `${dirInfo?.models_dir ?? ""}/${rel}`.replace(/\//g, "\\"),
+    (rel: string) => `${dirInfo?.models_dir ?? ""}/${rel}`.replace(/\//g, isMac() ? "/" : "\\"),
     [dirInfo],
   );
 
