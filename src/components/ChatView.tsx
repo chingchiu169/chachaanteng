@@ -1294,32 +1294,36 @@ const MessageBubble = memo(function MessageBubble({ msg, isStreamingLast }: { ms
             </div>
           </details>
         )}
-        <div
-          className={`chat-bubble text-sm ${
-            msg.role === "user" ? "bg-accent-subtle text-fg-bright" : "bg-raised"
-          }`}
-        >
-          {msg.role === "user" ? (
-            parts.length > 0 ? (
-              <div className="space-y-1.5">
-                {contentText(msg.content) && (
-                  <div className="whitespace-pre-wrap break-words">{contentText(msg.content)}</div>
-                )}
-                {partImages.map((p, i) => (
-                  <img key={i} src={p.image_url.url} alt="" className="max-h-64 max-w-full rounded-md" />
-                ))}
-              </div>
+        {/* Bubble box only when there's visible text — a thinking-only turn shows just the chip above,
+            so no empty bubble sits under it while the model is still reasoning. */}
+        {(msg.role === "user" ? parts.length > 0 || !!content : !!content) && (
+          <div
+            className={`chat-bubble text-sm ${
+              msg.role === "user" ? "bg-accent-subtle text-fg-bright" : "bg-raised"
+            }`}
+          >
+            {msg.role === "user" ? (
+              parts.length > 0 ? (
+                <div className="space-y-1.5">
+                  {contentText(msg.content) && (
+                    <div className="whitespace-pre-wrap break-words">{contentText(msg.content)}</div>
+                  )}
+                  {partImages.map((p, i) => (
+                    <img key={i} src={p.image_url.url} alt="" className="max-h-64 max-w-full rounded-md" />
+                  ))}
+                </div>
+              ) : (
+                content
+              )
+            ) : isStreamingLast ? (
+              // raw text while streaming; markdown re-render on completion (reference behavior).
+              // No content yet → render nothing: the bubble only shows real streamed output.
+              <div className="whitespace-pre-wrap break-words">{content}</div>
             ) : (
-              content
-            )
-          ) : isStreamingLast ? (
-            // raw text while streaming; markdown re-render on completion (reference behavior).
-            // No content yet → render nothing: the bubble only shows real streamed output.
-            content ? <div className="whitespace-pre-wrap break-words">{content}</div> : null
-          ) : (
-            content ? <Markdown text={content} /> : null
-          )}
-        </div>
+              <Markdown text={content} />
+            )}
+          </div>
+        )}
         {/* web search source chips (FR2.4) */}
         {msg.sources && msg.sources.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1.5 justify-end">
