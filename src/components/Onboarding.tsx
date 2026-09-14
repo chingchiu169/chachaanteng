@@ -208,7 +208,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
           </div>
 
           {error && (
-            <div className="alert alert-soft alert-error mb-4 text-sm">
+            <div className="alert alert-soft alert-error mb-3 text-sm">
               {error}
             </div>
           )}
@@ -355,7 +355,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
                 </div>
               )}
               {dl?.status === "error" && (
-                <div className="alert alert-soft alert-error mb-4 text-sm">
+                <div className="alert alert-soft alert-error mb-3 text-sm">
                   {dl.message || t("ob.dlError")}
                 </div>
               )}
