@@ -21,8 +21,10 @@ use tokio_util::sync::CancellationToken;
 const RELEASE_API: &str = "https://api.github.com/repos/cloudflare/cloudflared/releases/latest";
 const ASSET_NAME: &str = if cfg!(windows) {
     "cloudflared-windows-amd64.exe"
-} else {
+} else if cfg!(target_arch = "aarch64") {
     "cloudflared-darwin-arm64"
+} else {
+    "cloudflared-darwin-amd64"
 };
 /// Local binary name (no .exe on macOS).
 const BIN_NAME: &str = if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" };
