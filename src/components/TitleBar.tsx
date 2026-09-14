@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useThemeMode } from "../lib/themes";
+import { isMac } from "../lib/platform";
 import { useI18n, useT, type Lang } from "../i18n";
 
 /** Mirrors @tauri-apps/api's ResizeDirection (not re-exported by the package). */
@@ -52,17 +53,77 @@ function useMaximized(): boolean {
   return maximized;
 }
 
+/** Theme toggle + language pill — shared by the Windows title bar and the macOS sidebar footer. */
+export function TitleControls({ up = false }: { up?: boolean }) {
+  const t = useT();
+  const { mode, setMode } = useThemeMode();
+  const [langOpen, setLangOpen] = useState(false);
+  const { lang, setLang } = useI18n();
+
+  return (
+    <div className="relative flex items-center gap-2">
+      <button
+        onClick={() => setMode(mode === "dark" ? "light" : "dark")}
+        title={mode === "dark" ? t("titlebar.lightMode") : t("titlebar.darkMode")}
+        className="btn btn-circle btn-xs btn-ghost border border-line bg-raised hover:bg-hover text-sm leading-none"
+      >
+        {mode === "dark" ? (
+          <i className="fa-solid fa-sun" aria-hidden />
+        ) : (
+          <i className="fa-solid fa-moon" aria-hidden />
+        )}
+      </button>
+
+      <div className="relative">
+        <button
+          onClick={() => setLangOpen((o) => !o)}
+          title={t("titlebar.lang")}
+          className="btn btn-ghost h-7 min-h-0 rounded-full border border-line bg-raised hover:bg-hover text-xs font-medium gap-1 pl-2.5 pr-2"
+        >
+          {/* endonym — each language's own name, independent of the active UI language */}
+          {LANGS.find((l) => l.code === lang)?.label ?? ""}
+          <i className="fa-solid fa-caret-down" aria-hidden />
+        </button>
+        {langOpen && (
+          <>
+            {/* invisible backdrop — click outside closes the menu */}
+            <div className="fixed inset-0 z-40" onClick={() => setLangOpen(false)} />
+            {/* up: anchored bottom-right so it opens upward inside the narrow sidebar footer */}
+            <div
+              className={`absolute min-w-[130px] z-50 bg-elevated border border-line rounded-md shadow-xl overflow-hidden ${
+                up ? "bottom-full mb-1 right-0" : "top-full mt-1 left-1/2 -translate-x-1/2"
+              }`}
+            >
+              {LANGS.map((l) => (
+                <button
+                  key={l.code}
+                  onClick={() => {
+                    setLang(l.code);
+                    setLangOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-hover ${
+                    lang === l.code ? "text-accent-text font-medium" : "text-fg"
+                  }`}
+                >
+                  {l.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
- * Custom title bar (the window runs with decorations: false).
- * Left drag region + brand · center mode toggle & language pill · right min/max/close.
+ * Custom title bar — Windows only (the window runs with decorations: false).
+ * macOS uses the native transparent title bar instead, so this is not rendered there.
  */
 export default function TitleBar() {
   const t = useT();
   const win = getCurrentWindow();
-  const { mode, setMode } = useThemeMode();
   const maximized = useMaximized();
-  const [langOpen, setLangOpen] = useState(false);
-  const { lang, setLang } = useI18n();
 
   return (
     <header className="relative h-9 shrink-0 bg-surface border-b border-line select-none z-50 flex items-center">
@@ -76,52 +137,8 @@ export default function TitleBar() {
       </div>
 
       {/* Right: light/dark toggle + language pill, snug against the window buttons */}
-      <div className="relative flex items-center gap-2 pr-1">
-        <button
-          onClick={() => setMode(mode === "dark" ? "light" : "dark")}
-          title={mode === "dark" ? t("titlebar.lightMode") : t("titlebar.darkMode")}
-          className="btn btn-circle btn-xs btn-ghost border border-line bg-raised hover:bg-hover text-sm leading-none"
-        >
-          {mode === "dark" ? (
-            <i className="fa-solid fa-sun" aria-hidden />
-          ) : (
-            <i className="fa-solid fa-moon" aria-hidden />
-          )}
-        </button>
-
-        <div className="relative">
-          <button
-            onClick={() => setLangOpen((o) => !o)}
-            title={t("titlebar.lang")}
-            className="btn btn-ghost h-7 min-h-0 rounded-full border border-line bg-raised hover:bg-hover text-xs font-medium gap-1 pl-2.5 pr-2"
-          >
-            {/* endonym — each language's own name, independent of the active UI language */}
-            {LANGS.find((l) => l.code === lang)?.label ?? ""}
-            <i className="fa-solid fa-caret-down" aria-hidden />
-          </button>
-          {langOpen && (
-            <>
-              {/* invisible backdrop — click outside closes the menu */}
-              <div className="fixed inset-0 z-40" onClick={() => setLangOpen(false)} />
-              <div className="absolute top-full mt-1 left-1/2 -translate-x-1/2 min-w-[130px] z-50 bg-elevated border border-line rounded-md shadow-xl overflow-hidden">
-                {LANGS.map((l) => (
-                  <button
-                    key={l.code}
-                    onClick={() => {
-                      setLang(l.code);
-                      setLangOpen(false);
-                    }}
-                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-hover ${
-                      lang === l.code ? "text-accent-text font-medium" : "text-fg"
-                    }`}
-                  >
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+      <div className="pr-1">
+        <TitleControls />
       </div>
 
       {/* Right: Windows-style min / max / close */}
@@ -156,22 +173,21 @@ export default function TitleBar() {
   );
 }
 
-/** Edge/corner hit zones — borderless windows lose native edge-resize on Windows. */
-const ZONES: { dir: ResizeDir; cls: string }[] = [
-  { dir: "North", cls: "top-0 left-3 right-3 h-1 cursor-n-resize" },
-  { dir: "South", cls: "bottom-0 left-3 right-3 h-1 cursor-s-resize" },
-  { dir: "West", cls: "left-0 top-3 bottom-3 w-1 cursor-w-resize" },
-  { dir: "East", cls: "right-0 top-3 bottom-3 w-1 cursor-e-resize" },
-  { dir: "NorthWest", cls: "top-0 left-0 h-3 w-3 cursor-nw-resize" },
-  { dir: "NorthEast", cls: "top-0 right-0 h-3 w-3 cursor-ne-resize" },
-  { dir: "SouthWest", cls: "bottom-0 left-0 h-3 w-3 cursor-sw-resize" },
-  { dir: "SouthEast", cls: "bottom-0 right-0 h-3 w-3 cursor-se-resize" },
-];
-
-/** Eight transparent resize zones; hidden while maximized. Render inside a `relative` root. */
+/** Edge/corner hit zones for the borderless Windows window — macOS keeps native decorations,
+ * so its edges already resize natively. */
 export function ResizeHandles() {
   const maximized = useMaximized();
-  if (maximized) return null;
+  if (isMac() || maximized) return null;
+  const ZONES: { dir: ResizeDir; cls: string }[] = [
+    { dir: "North", cls: "top-0 left-3 right-3 h-1 cursor-n-resize" },
+    { dir: "South", cls: "bottom-0 left-3 right-3 h-1 cursor-s-resize" },
+    { dir: "West", cls: "left-0 top-3 bottom-3 w-1 cursor-w-resize" },
+    { dir: "East", cls: "right-0 top-3 bottom-3 w-1 cursor-e-resize" },
+    { dir: "NorthWest", cls: "top-0 left-0 h-3 w-3 cursor-nw-resize" },
+    { dir: "NorthEast", cls: "top-0 right-0 h-3 w-3 cursor-ne-resize" },
+    { dir: "SouthWest", cls: "bottom-0 left-0 h-3 w-3 cursor-sw-resize" },
+    { dir: "SouthEast", cls: "bottom-0 right-0 h-3 w-3 cursor-se-resize" },
+  ];
   return (
     <>
       {ZONES.map((z) => (

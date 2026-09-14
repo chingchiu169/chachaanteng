@@ -9,7 +9,8 @@ import BenchmarksView from "./components/BenchmarksView";
 import MonitorView from "./components/MonitorView";
 import ServerLogsView from "./components/ServerLogsView";
 import SidebarServerCard from "./components/SidebarServerCard";
-import TitleBar, { ResizeHandles } from "./components/TitleBar";
+import TitleBar, { ResizeHandles, TitleControls } from "./components/TitleBar";
+import { isMac } from "./lib/platform";
 import { getSettings, listInstalledEngines } from "./lib/api";
 import { ensureBenchEvents } from "./lib/bench-events";
 import { ensureMonitorSync } from "./lib/monitor-sync";
@@ -41,6 +42,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("chat");
   const { setSettings, setEngines } = useApp();
   const t = useT();
+  const mac = isMac();
 
   const load = async () => {
     const [s, e] = await Promise.all([getSettings(), listInstalledEngines()]);
@@ -80,7 +82,7 @@ export default function App() {
   if (phase === "loading") {
     return (
       <div className="relative h-screen flex flex-col bg-base text-fg">
-        <TitleBar />
+        {!mac && <TitleBar />}
         <ResizeHandles />
         <div className="flex-1 flex items-center justify-center text-fg-faint">{t("app.loading")}</div>
       </div>
@@ -90,7 +92,7 @@ export default function App() {
   if (phase === "onboarding") {
     return (
       <div className="relative h-screen flex flex-col bg-base">
-        <TitleBar />
+        {!mac && <TitleBar />}
         <ResizeHandles />
         <div className="flex-1 min-h-0 overflow-hidden">
           <Onboarding onDone={onOnboarded} />
@@ -101,10 +103,10 @@ export default function App() {
 
   return (
     <div className="relative h-screen flex flex-col bg-base text-fg">
-      <TitleBar />
+      {!mac && <TitleBar />}
       <ResizeHandles />
       <div className="flex-1 min-h-0 flex">
-        <aside className="w-48 shrink-0 border-r border-line bg-surface p-3 flex flex-col gap-1">
+        <aside className={`w-48 shrink-0 border-r border-line bg-surface px-3 pb-3 pt-2 flex flex-col gap-1`}>
           <button onClick={() => setTab("chat")} className={tabCls(tab === "chat")}>
             <i className="fa-solid fa-comment-dots" aria-hidden /> {t("tab.chat")}
           </button>
@@ -132,6 +134,12 @@ export default function App() {
           {/* Live per-server cards — pinned to the bottom of the menu, visible from any page */}
           <div className="flex-1" />
           <SidebarServerCard />
+          {/* macOS: theme + language live here instead of in a title bar (menu opens upward) */}
+          {mac && (
+            <div className="mt-2 pt-2 border-t border-line">
+              <TitleControls up />
+            </div>
+          )}
         </aside>
         {/* All views stay mounted — tab switching only hides them, so view-local state (drafts,
             scroll position, in-flight UI) survives page switches like real desktop tabs. Each
