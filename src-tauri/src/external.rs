@@ -3,10 +3,10 @@
 //! The live registration is session-scoped: it lives in memory and disappears when
 //! the app restarts. What survives a restart, under its own settings row: the
 //! *address* (plus a flag that a key was needed). The API key itself is never written
-//! to our database — it goes to the Windows Credential Manager (generic credential,
-//! see [`wincred`]), encrypted by the OS and bound to this Windows user, so copying
-//! the app data elsewhere never exposes it. A remembered address is re-registered on
-//! the next start only when its port still identifies itself as llama-server — see
+//! to our database — it goes to the OS credential store (Windows Credential Manager /
+//! macOS Keychain, see [`wincred`]), encrypted by the OS and bound to this user, so
+//! copying the app data elsewhere never exposes it. A remembered address is re-registered
+//! on the next start only when its port still identifies itself as llama-server — see
 //! [`external_restore`].
 
 use crate::AppState;
@@ -82,7 +82,48 @@ mod wincred {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+/// macOS Keychain via the built-in `security` CLI (login keychain, generic password).
+#[cfg(target_os = "macos")]
+mod wincred {
+    /// Store `secret` under `target`, replacing any existing entry. The first save may show a
+    /// Keychain access prompt; subsequent saves are silent.
+    pub fn set(target: &str, user: &str, secret: &str) -> Result<(), String> {
+        // -U replaces an existing entry. The secret is briefly visible in `ps` — acceptable for
+        // a local process (the Windows path passes it in memory).
+        let out = std::process::Command::new("security")
+            .args(["add-generic-password", "-U", "-a", user, "-s", target, "-w", secret])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(format!(
+                "security add-generic-password failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+        Ok(())
+    }
+
+    /// Read back the secret stored under `target` (None when absent or store unavailable).
+    pub fn get(target: &str) -> Option<String> {
+        let out = std::process::Command::new("security")
+            .args(["find-generic-password", "-s", target, "-w"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None; // exit 44 = item not found
+        }
+        Some(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string())
+    }
+
+    /// Delete the entry under `target` (no-op when absent).
+    pub fn delete(target: &str) {
+        let _ = std::process::Command::new("security")
+            .args(["delete-generic-password", "-s", target])
+            .output();
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 mod wincred {
     pub fn set(_target: &str, _user: &str, _secret: &str) -> Result<(), String> {
         Err("credential store not supported on this platform".into())
@@ -425,7 +466,9 @@ mod tests {
     use super::*;
 
     /// Round-trip through the real OS credential store (self-cleaning): proves keys are
-    /// encrypted at rest by the OS and read back within this user's session.
+    /// encrypted at rest by the OS and read back within this user's session. Windows-only —
+    /// on macOS this would touch the real login keychain and can trigger an ACL prompt.
+    #[cfg(windows)]
     #[test]
     fn api_key_roundtrip_via_credential_store() {
         const HOST: &str = "roundtrip-test.invalid"; // .invalid TLD — never resolves, no collision
