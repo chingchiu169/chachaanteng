@@ -117,6 +117,45 @@ pub async fn launch_server(
     spawn_server(app, state, engine_exe, args, port).await
 }
 
+/// Best-effort name of the process listening on `port` (for the occupied-port error message).
+/// Runs off the tokio workers — lsof / powershell duration is unbounded on a loaded system.
+async fn port_holder(port: u16) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        #[cfg(not(windows))]
+        {
+            // -Fc emits one field per line prefixed by its letter; `c` = command name (full,
+            // not truncated like the default table view). First listener wins.
+            let out = std::process::Command::new("lsof")
+                .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fc"])
+                .output()
+                .ok()?;
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find_map(|l| l.strip_prefix('c'))
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        }
+        #[cfg(windows)]
+        {
+            let out = std::process::Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &format!(
+                        r#"(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess | ForEach-Object {{ (Get-Process -Id $_ -ErrorAction SilentlyContinue).Name }}"#
+                    ),
+                ])
+                .output()
+                .ok()?;
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (!name.is_empty()).then_some(name)
+        }
+    })
+    .await
+    .ok()?
+}
+
 async fn spawn_server(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -136,14 +175,26 @@ async fn spawn_server(
     // server from a previous session): llama-server only binds after the model finishes
     // loading, so without this check a doomed launch wastes minutes of VRAM before dying.
     // Async connect — the std::net variant would block a tokio worker for up to 300 ms.
-    if tokio::time::timeout(
+    // NOTE: timeout() resolves Ok(Err(refused)) for a CLOSED port (the refusal is instant), so
+    // only an actually-completed CONNECT means the port is taken — checking the outer Result's
+    // is_ok() would flag every free port as occupied.
+    match tokio::time::timeout(
         std::time::Duration::from_millis(300),
         tokio::net::TcpStream::connect(std::net::SocketAddr::from(([127, 0, 0, 1], port))),
     )
     .await
-    .is_ok()
     {
-        return Err(format!("Port {port} 已經被其他程序佔用"));
+        Ok(Ok(_)) => {
+            // Name the holder when we can — on macOS e.g. ControlCenter (AirPlay) owns 5000/7000,
+            // and a bare "occupied by another program" gives no clue which port to avoid.
+            let holder = port_holder(port).await;
+            return Err(match holder {
+                Some(h) => format!("Port {port} 已經被 {h} 佔用"),
+                None => format!("Port {port} 已經被其他程序佔用"),
+            });
+        }
+        // refused (free port) or no answer within the window — llama-server can still bind.
+        _ => {}
     }
 
     // Model path for display: args already carry `-m <path>`
@@ -312,17 +363,69 @@ fn parse_port(cmdline: &str) -> Option<u16> {
     last
 }
 
-/// Last `-m <path>` / `--model <path>` in a command line (quoted paths with spaces included).
+/// Last `-m <path>` / `--model <path>` in a command line. The value may be quoted (Windows WMI
+/// re-quotes args with spaces) or unquoted WITH embedded spaces (macOS ps prints argv verbatim, no
+/// re-quoting); the unquoted form runs until the next flag token or end of line.
 fn parse_model(cmdline: &str) -> Option<String> {
-    // \x22 = double quote (keeps the pattern free of literal quotes for a plain raw string)
-    let re = regex::Regex::new(r"(?:^|\s)(?:-m|--model)(?:=|\s+)(\x22[^\x22]*\x22|\S+)").ok()?;
     let mut last = None;
-    for m in re.captures_iter(cmdline) {
-        if let Some(d) = m.get(1) {
-            last = Some(d.as_str().trim_matches('"').to_string());
+    let mut from = 0usize;
+    while let Some((flag_start, flag_len)) = find_model_flag(cmdline, from) {
+        // Value starts after the flag: optional '=', then a quoted string or bare text.
+        let mut rest = &cmdline[flag_start + flag_len..];
+        if let Some(r2) = rest.strip_prefix('=') {
+            rest = r2;
         }
+        let t = rest.trim_start();
+        let value = if let Some(q) = t.strip_prefix('"') {
+            // Quoted — take everything up to the closing quote (or EOL when unbalanced).
+            q.split_once('"').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| q.to_string())
+        } else {
+            // Unquoted — runs until whitespace followed by a flag token ("-" + something) or EOL.
+            let mut end = t.len();
+            for (i, c) in t.char_indices() {
+                if c.is_whitespace() && is_flag_after(&t[i..]) {
+                    end = i;
+                    break;
+                }
+            }
+            t[..end].to_string()
+        };
+        last = Some(value);
+        from = flag_start + flag_len; // keep scanning — a later -m wins (spawn order)
     }
     last
+}
+
+/// True when the text after some whitespace begins with a flag token ("-x" / "--xx").
+fn is_flag_after(s: &str) -> bool {
+    let t = s.trim_start();
+    t.len() > 1 && t.starts_with('-')
+}
+
+/// Next "-m"/"--model" token at or after `from` as (byte start, flag length). The token must be
+/// whitespace-bounded and followed by '=', whitespace, or EOL — so "--models" or a path component
+/// named "-m" don't match.
+fn find_model_flag(s: &str, from: usize) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize)> = None;
+    for flag in ["-m", "--model"] {
+        let mut search_from = from;
+        while let Some(rel) = s[search_from..].find(flag) {
+            let abs = search_from + rel;
+            let at_boundary = abs == 0 || s.as_bytes()[abs - 1].is_ascii_whitespace();
+            let after = abs + flag.len();
+            let ok_after = after >= s.len()
+                || s.as_bytes()[after] == b'='
+                || s.as_bytes()[after].is_ascii_whitespace();
+            if at_boundary && ok_after {
+                if best.map_or(true, |b| abs < b.0) {
+                    best = Some((abs, flag.len()));
+                }
+                break; // this flag kind is settled — the other kind is checked separately
+            }
+            search_from = abs + 1;
+        }
+    }
+    best
 }
 
 /// (pid, port, model) parsed from the ConvertTo-Json process enumeration output.
@@ -374,6 +477,32 @@ fn enumerate_llama_server_processes() -> Vec<(u32, u16, String)> {
     parse_process_rows(&text)
 }
 
+/// One `ps -o pid=,command=` line → (pid, port, model), or None when it isn't a local llama-server.
+#[cfg(not(windows))]
+fn parse_ps_line(line: &str) -> Option<(u32, u16, String)> {
+    let mut it = line.split_whitespace();
+    let pid: u32 = it.next()?.parse().ok()?;
+    let cmd = it.collect::<Vec<_>>().join(" ");
+    // argv[0] may contain spaces (".../Library/Application Support/engines/b10952-metal/llama-server"),
+    // so a whitespace split can't recover it — walk the leading tokens up to the first flag and
+    // match the binary name as a path component.
+    let bin = crate::util::bin_name("llama-server");
+    let mut is_llama = false;
+    for tok in cmd.split(' ') {
+        if tok.starts_with('-') {
+            break; // reached the flags — argv[0] didn't match
+        }
+        if std::path::Path::new(tok).file_name().and_then(|f| f.to_str()) == Some(bin.as_str()) {
+            is_llama = true;
+            break;
+        }
+    }
+    if !is_llama {
+        return None;
+    }
+    Some((pid, parse_port(&cmd)?, parse_model(&cmd).unwrap_or_default()))
+}
+
 /// (pid, port, model) for every running llama-server with a parseable local port.
 #[cfg(not(windows))]
 fn enumerate_llama_server_processes() -> Vec<(u32, u16, String)> {
@@ -387,17 +516,7 @@ fn enumerate_llama_server_processes() -> Vec<(u32, u16, String)> {
     };
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        .filter_map(|line| {
-            let mut it = line.split_whitespace();
-            let pid: u32 = it.next()?.parse().ok()?;
-            let cmd = it.collect::<Vec<_>>().join(" ");
-            // Match the executable basename, not a substring (avoids "my-llama-server-tool").
-            let exe = cmd.split_whitespace().next().unwrap_or("");
-            if std::path::Path::new(exe).file_name()?.to_str()? != crate::util::bin_name("llama-server") {
-                return None;
-            }
-            Some((pid, parse_port(&cmd)?, parse_model(&cmd).unwrap_or_default()))
-        })
+        .filter_map(parse_ps_line)
         .collect()
 }
 
@@ -427,6 +546,25 @@ mod tests {
         let cmd = r#"C:\a\b.exe --port 5001 -m C:\x\one.gguf --host 127.0.0.1 --port 8080 -m "C:\y z\two gguf\model file.gguf""#;
         assert_eq!(parse_port(cmd), Some(8080));
         assert_eq!(parse_model(cmd).as_deref(), Some("C:\\y z\\two gguf\\model file.gguf"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn parses_mac_ps_line_with_spaces_in_paths() {
+        // Captured from macOS ps (2026-09-14) — argv is printed verbatim, no re-quoting, so the
+        // engine and model paths keep their embedded "Application Support" / space segments.
+        let line = "62236 /Users/d/Library/Application Support/com.chachaanteng/engines/b10952-metal/llama-server -c 65536 --port 8080 -m /Users/d/Library/Application Support/models/gemma gguf/model file.gguf --host 127.0.0.1 --port 8080";
+        let (pid, port, model) = parse_ps_line(line).expect("default install path must be recognized");
+        assert_eq!(pid, 62236);
+        assert_eq!(port, 8080);
+        assert_eq!(model, "/Users/d/Library/Application Support/models/gemma gguf/model file.gguf");
+    }
+
+    #[test]
+    fn model_value_stops_at_next_flag() {
+        // Unquoted value with spaces runs until the next flag token; a later -m still wins.
+        let cmd = "llama-server -m /a/b one.gguf --temp 0.8 -m \"/c/d two.gguf\"";
+        assert_eq!(parse_model(cmd).as_deref(), Some("/c/d two.gguf"));
     }
 }
 
