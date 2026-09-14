@@ -121,10 +121,9 @@ fn process_working_set_bytes(pid: u32) -> Option<u64> {
 // macOS (bounded `ps` probes — no FFI needed)
 // ---------------------------------------------------------------------------
 
-/// Cumulative user+kernel CPU time of a process in whole seconds (`ps cputime`).
+/// Cumulative user+kernel CPU time of a process in centiseconds (`ps cputime`).
 #[cfg(not(windows))]
 fn cpu_time_units(pid: u32) -> Option<u64> {
-    // ps cputime has 1-second granularity → CPU% is quantized (±a few % at a 2 s poll); fine for v1.
     let out = std::process::Command::new("ps")
         .args(["-o", "cputime=", "-p", &pid.to_string()])
         .output()
@@ -146,29 +145,44 @@ fn process_working_set_bytes(pid: u32) -> Option<u64> {
         .map(|kb| kb * 1024)
 }
 
-/// Parse `ps` cputime ("H:MM:SS" or "D-HH:MM:SS") into whole seconds.
+/// Parse macOS/BSD `ps` cputime into centiseconds. The format is "M:SS.cc" — minutes grow
+/// unbounded past an hour (launchd prints e.g. "286:00.37"), there is no H:MM:SS form.
 #[cfg(not(windows))]
 fn parse_ps_cputime(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
-    let (days, hms) = match s.split_once('-') {
-        Some((d, rest)) => (d.parse::<u64>().ok()? * 86_400, rest),
-        None => (0, s),
+    // Defensive: a bare "SS.cc" without the minutes field (ps always prints it, but be safe).
+    let (min_part, sec_part) = match s.split_once(':') {
+        Some((m, rest)) => (m, rest),
+        None => ("0", s),
     };
-    let mut parts = hms.split(':');
-    let h = parts.next()?.parse::<u64>().ok()?;
-    let m = parts.next()?.parse::<u64>().ok()?;
-    let sec = parts.next()?.parse::<u64>().ok()?;
-    if parts.next().is_some() {
-        return None; // more than H:MM:SS — unexpected shape
-    }
-    Some(days + h * 3600 + m * 60 + sec)
+    let min: u64 = min_part.parse().ok()?;
+    let (sec_str, cc_str) = match sec_part.split_once('.') {
+        Some((a, b)) => (a, b),
+        None => (sec_part, ""),
+    };
+    let sec: u64 = sec_str.parse().ok()?;
+    // Centiseconds — ps prints exactly two digits; pad/truncate defensively.
+    let cc: u64 = match cc_str {
+        "" => 0,
+        _ => {
+            let mut d = cc_str.to_string();
+            if d.len() > 2 {
+                d.truncate(2);
+            }
+            while d.len() < 2 {
+                d.push('0');
+            }
+            d.parse().ok()?
+        }
+    };
+    Some(min * 6000 + sec * 100 + cc)
 }
 
 /// Conversion factor from platform CPU-time units to milliseconds.
-const UNITS_TO_MS: f64 = if cfg!(windows) { 0.0001 } else { 1000.0 };
+const UNITS_TO_MS: f64 = if cfg!(windows) { 0.0001 } else { 10.0 }; // macOS: centiseconds
 
 /// Per-PID CPU baseline — cumulative 100 ns units + wall-clock instant of the last sample.
 static CPU_BASELINES: std::sync::LazyLock<
@@ -341,5 +355,15 @@ mod tests {
         assert_eq!(parse_pmon_sm(out, 424), Some(95.0));
         assert_eq!(parse_pmon_sm(out, 999), Some(3.0));
         assert_eq!(parse_pmon_sm(out, 1), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn ps_cputime_parse() {
+        // macOS prints "M:SS.cc" — minutes grow past an hour, no H:MM:SS form.
+        assert_eq!(parse_ps_cputime("  0:23.95"), Some(2395));
+        assert_eq!(parse_ps_cputime("286:00.37"), Some(286 * 6000 + 37));
+        assert_eq!(parse_ps_cputime("1030:35.71"), Some(1030 * 6000 + 3571));
+        assert_eq!(parse_ps_cputime(""), None);
     }
 }
