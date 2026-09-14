@@ -61,7 +61,7 @@ export function TitleControls({ up = false }: { up?: boolean }) {
   const { lang, setLang } = useI18n();
 
   return (
-    <div className="relative flex items-center gap-2">
+    <div className="relative flex items-center justify-between gap-2">
       <button
         onClick={() => setMode(mode === "dark" ? "light" : "dark")}
         title={mode === "dark" ? t("titlebar.lightMode") : t("titlebar.darkMode")}
