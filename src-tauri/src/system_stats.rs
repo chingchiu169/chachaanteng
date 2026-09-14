@@ -207,7 +207,10 @@ fn cpu_counters() -> Option<(u64, u64)> {
 #[cfg(not(windows))]
 fn cpu_counters() -> Option<(u64, u64)> {
     extern "C" {
-        fn host_self(host_port: *mut u32) -> i32; // KERN_SUCCESS = 0
+        // mach_host_self returns the host port directly. A hand-rolled `host_self(*mut u32)`
+        // declaration does NOT work on macOS — that symbol returns the port in the return
+        // register and never writes *out, so the out-param stays 0 and every later call fails.
+        fn mach_host_self() -> u32;
         fn host_statistics(target_host: u32, flavor: i32, info: *mut c_void, count: *mut u32) -> i32;
     }
 
@@ -222,11 +225,11 @@ fn cpu_counters() -> Option<(u64, u64)> {
 
     const HOST_CPU_LOAD_INFO: i32 = 3;
 
-    let mut host: u32 = 0; // mach ports are uint32 on all current Apple platforms
-    if unsafe { host_self(&mut host) } != 0 {
+    let host = unsafe { mach_host_self() };
+    if host == 0 {
         return None;
     }
-    let mut info = std::mem::zeroed::<HostCpuLoadInfo>();
+    let mut info = HostCpuLoadInfo { user: 0, system: 0, idle: 0, nice: 0 };
     let mut count: u32 = 4; // CPU_STATE_MAX
     if unsafe {
         host_statistics(
@@ -246,9 +249,25 @@ fn cpu_counters() -> Option<(u64, u64)> {
     Some((total, info.idle as u64))
 }
 
-/// System RAM as `(used_bytes, total_bytes)` via `GlobalMemoryStatusEx`.
+/// RAM sample — used/total plus the macOS Activity-Monitor-style breakdown (None on Windows,
+/// which has no equivalent source for those categories).
+#[derive(Clone, Copy)]
+struct RamSample {
+    used: u64,
+    total: u64,
+    /// App Memory — anonymous pages.
+    app: Option<u64>,
+    /// System core — wired-down pages (kernel + drivers + window server).
+    wired: Option<u64>,
+    /// Compressed memory (pages stored in the compressor).
+    compressed: Option<u64>,
+    /// Swap space in use.
+    swap_used: Option<u64>,
+}
+
+/// System RAM via `GlobalMemoryStatusEx`.
 #[cfg(windows)]
-fn memory() -> Option<(u64, u64)> {
+fn memory() -> RamSample {
     let mut status = MEMORYSTATUSEX {
         dw_length: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
         dw_memory_load: 0,
@@ -261,20 +280,24 @@ fn memory() -> Option<(u64, u64)> {
         ull_avail_extended_virtual: 0,
     };
     if unsafe { GlobalMemoryStatusEx(&mut status) } == 0 {
-        return None;
+        return RamSample { used: 0, total: 0, app: None, wired: None, compressed: None, swap_used: None };
     }
     let total = status.ull_total_phys;
     let available = status.ull_avail_phys;
     if total <= 0 || available > total {
-        return None;
+        return RamSample { used: 0, total: 0, app: None, wired: None, compressed: None, swap_used: None };
     }
-    Some((total - available, total))
+    RamSample { used: total - available, total, app: None, wired: None, compressed: None, swap_used: None }
 }
 
-/// System RAM on macOS as `(used_bytes, total_bytes)` — total via the `hw.memsize` sysctl,
-/// free pages from `vm_stat`. "Available memory" semantics, not Windows working-set.
+/// System RAM on macOS — total via the `hw.memsize` sysctl, the Activity-Monitor-style
+/// breakdown from `vm_stat` (the same counters Activity Monitor reads):
+/// App Memory = anonymous pages, System core = wired-down pages, Compressed = compressor
+/// occupancy. "Used" is their sum (Activity Monitor's composite), not total − free — macOS
+/// keeps file-backed cache in "free" that it would evict on demand. Swap comes from the
+/// `vm.swapusage` sysctl (`xsw_usage_t`, three u64s).
 #[cfg(not(windows))]
-fn memory() -> Option<(u64, u64)> {
+fn memory() -> RamSample {
     extern "C" {
         fn sysctlbyname(
             name: *const i8,
@@ -283,6 +306,14 @@ fn memory() -> Option<(u64, u64)> {
             newp: *const c_void,
             newlen: usize,
         ) -> i32;
+    }
+
+    /// `xsw_usage_t` from vm/vm_page.h.
+    #[repr(C)]
+    struct XswUsage {
+        xu_total: u64,
+        xu_avail: u64,
+        xu_used: u64,
     }
 
     let mut total: u64 = 0;
@@ -298,24 +329,56 @@ fn memory() -> Option<(u64, u64)> {
     } != 0
         || total == 0
     {
-        return None;
+        return RamSample { used: 0, total: 0, app: None, wired: None, compressed: None, swap_used: None };
     }
 
+    // Swap — independent of vm_stat, so it survives a vm_stat parse failure.
+    let mut sw = XswUsage { xu_total: 0, xu_avail: 0, xu_used: 0 };
+    let mut sw_len = std::mem::size_of::<XswUsage>();
+    let swap_used = if unsafe {
+        sysctlbyname(
+            b"vm.swapusage\0".as_ptr() as *const i8,
+            &mut sw as *mut _ as *mut c_void,
+            &mut sw_len,
+            std::ptr::null(),
+            0,
+        )
+    } == 0
+    {
+        Some(sw.xu_used)
+    } else {
+        None
+    };
+
     // vm_stat: "Mach Virtual Memory Statistics: (page size of 16384 bytes)" + "Pages free: N."
-    let out = std::process::Command::new("vm_stat").output().ok()?;
+    let out = match std::process::Command::new("vm_stat").output() {
+        Ok(o) => o,
+        Err(_) => return RamSample { used: total, total, app: None, wired: None, compressed: None, swap_used },
+    };
     let text = String::from_utf8_lossy(&out.stdout);
-    let page_size: u64 = text.lines().find_map(|l| {
+    // The number is followed by " bytes)" — take the first whitespace-delimited token.
+    let page_size: u64 = match text.lines().find_map(|l| {
         let rest = l.split_once("page size of ")?.1;
-        rest.split(')').next()?.trim().parse().ok()
-    })?;
-    let free_pages: u64 = text.lines().find_map(|l| {
-        let rest = l.trim().strip_prefix("Pages free:")?;
-        rest.trim().trim_end_matches('.').parse().ok()
-    })?;
-    if page_size == 0 {
-        return None;
-    }
-    Some((total.saturating_sub(free_pages * page_size), total))
+        rest.split_whitespace().next()?.parse().ok()
+    }) {
+        Some(ps) if ps > 0 => ps,
+        _ => return RamSample { used: total, total, app: None, wired: None, compressed: None, swap_used },
+    };
+    // "Label:            N." — trailing dot + variable whitespace.
+    let pages = |prefix: &str| -> Option<u64> {
+        text.lines().find_map(|l| {
+            let rest = l.trim().strip_prefix(prefix)?;
+            rest.trim().trim_end_matches('.').parse().ok()
+        })
+    };
+
+    let app = pages("Anonymous pages:").map(|p| p * page_size);
+    let wired = pages("Pages wired down:").map(|p| p * page_size);
+    let compressed = pages("Pages occupied by compressor:").map(|p| p * page_size);
+    // Used = the three categories (Activity Monitor's composite). Missing pieces fall back to 0.
+    let used = [app, wired, compressed].iter().fold(0u64, |acc, v| acc + v.unwrap_or(0));
+
+    RamSample { used, total, app, wired, compressed, swap_used }
 }
 
 /// Disk usage `(used_bytes, total_bytes)` for the drive holding `path`.
@@ -341,26 +404,59 @@ fn disk_usage(path: &str) -> Option<(u64, u64)> {
 /// Disk usage `(used_bytes, total_bytes)` of the system volume via `statfs("/")`.
 #[cfg(not(windows))]
 fn disk_usage(_path: &str) -> Option<(u64, u64)> {
-    extern "C" {
-        fn statfs(path: *const i8, buf: *mut StatfsPrefix) -> i32;
-    }
-
-    /// Prefix of BSD `struct statfs` — only the fields we read (layout matches C).
-    #[repr(C)]
-    struct StatfsPrefix {
-        fs_type: i32,
-        f_flags: u32,
-        f_bsize: u32,
-        f_blocks: u64,
-        f_bfree: u64,
-    }
-
-    let mut buf = std::mem::zeroed::<StatfsPrefix>();
-    if unsafe { statfs(b"/\0".as_ptr() as *const i8, &mut buf) } != 0 || buf.f_blocks == 0 {
+    // The FULL platform struct must be provided: macOS's statfs is ~2 KB (it embeds two
+    // 1024-byte mount-name arrays) and the C call writes every field regardless of what we
+    // read — a hand-rolled prefix buffer overflows the stack and segfaulted the Monitor poll.
+    let mut buf = unsafe { std::mem::zeroed::<libc::statfs>() };
+    if unsafe { libc::statfs(b"/\0".as_ptr() as *const i8, &mut buf) } != 0 || buf.f_blocks == 0 {
         return None;
     }
     let bsize = buf.f_bsize as u64;
     Some((buf.f_blocks.saturating_sub(buf.f_bfree) * bsize, buf.f_blocks * bsize))
+}
+
+/// First run of ASCII digits after `key` in `line` (ioreg prints `"Key"=123,` inline).
+#[cfg(not(windows))]
+fn digits_after(line: &str, key: &str) -> Option<u64> {
+    let rest = line.split_once(key)?;
+    let digits: String = rest
+        .1
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
+/// Cumulative whole-disk bytes `(read, write)` from IOKit. The per-physical-disk counters live in
+/// the IOBlockStorageDriver node's "Statistics" dict; APFS container/volume nodes carry their own
+/// (differently-named) counters deeper in the same subtree, so only Statistics lines owned by an
+/// IOBlockStorageDriver class are summed — one entry per physical disk. ~25 ms via `ioreg`.
+#[cfg(not(windows))]
+fn disk_counters() -> Option<(u64, u64)> {
+    let out = std::process::Command::new("ioreg")
+        .args(["-rc", "IOBlockStorageDriver", "-l"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Node headers look like "+-o NAME <class IOBlockStorageDriver, id ...>"; a node's properties
+    // follow its header until the next one.
+    let mut read: u64 = 0;
+    let mut write: u64 = 0;
+    let mut found = false;
+    let mut cls = "";
+    for line in text.lines() {
+        if let Some(at) = line.find("<class ") {
+            cls = line[at + "<class ".len()..].split(',').next().unwrap_or("");
+            continue;
+        }
+        if cls == "IOBlockStorageDriver" && line.contains("\"Statistics\"") {
+            read += digits_after(line, "\"Bytes (Read)\"").unwrap_or(0);
+            write += digits_after(line, "\"Bytes (Write)\"").unwrap_or(0);
+            found = true;
+        }
+    }
+    found.then_some((read, write))
 }
 
 /// CPU busy % from cumulative counter deltas. `None` on rollback or a
@@ -478,6 +574,11 @@ pub struct SystemStats {
     pub cpu_percent: Option<f64>,
     pub ram_used_bytes: u64,
     pub ram_total_bytes: u64,
+    /// macOS Activity-Monitor-style RAM breakdown (null on Windows or when unavailable).
+    pub ram_app_bytes: Option<u64>,
+    pub ram_wired_bytes: Option<u64>,
+    pub ram_compressed_bytes: Option<u64>,
+    pub swap_used_bytes: Option<u64>,
     pub disk_used_bytes: u64,
     pub disk_total_bytes: u64,
     /// Whole-system disk throughput (bytes/sec) from PDH rate counters; null until the first valid sample.
@@ -495,13 +596,23 @@ pub struct SysStatsCache {
     /// Lazily opened PDH rate counters for whole-system disk throughput (Windows only).
     #[cfg(windows)]
     disk_io: Option<DiskIo>,
+    /// Previous whole-disk cumulative bytes + when sampled — macOS throughput comes from deltas.
+    #[cfg(not(windows))]
+    prev_disk: Option<(Instant, u64, u64)>,
 }
 
 impl Default for SysStatsCache {
     fn default() -> Self {
         #[cfg(windows)]
         let disk_io = None;
-        Self { prev_cpu: None, cached: None, #[cfg(windows)] disk_io }
+        Self {
+            prev_cpu: None,
+            cached: None,
+            #[cfg(windows)]
+            disk_io,
+            #[cfg(not(windows))]
+            prev_disk: None,
+        }
     }
 }
 
@@ -526,7 +637,7 @@ pub async fn get_system_stats(
 
     // Fast counter reads (FFI) — cheap, done inline.
     let cpu_now = cpu_counters();
-    let ram = memory().unwrap_or((0, 0));
+    let ram = memory();
     let disk_path = app
         .path()
         .app_data_dir()
@@ -560,9 +671,32 @@ pub async fn get_system_stats(
             None => (None, None),
         }
     };
-    // No throughput source on macOS — the Monitor tiles render "—" for null.
+    // Whole-system disk throughput on macOS — cumulative IOKit bytes; the rate is the delta
+    // between polls. First sample is baseline only ("—"), a counter rollback (reboot, disk swap)
+    // just resets the baseline.
     #[cfg(not(windows))]
-    let (disk_read_bps, disk_write_bps): (Option<f64>, Option<f64>) = (None, None);
+    let (disk_read_bps, disk_write_bps): (Option<f64>, Option<f64>) = {
+        let now = Instant::now();
+        match disk_counters() {
+            Some(curr) => {
+                let mut cache = state.sys_stats.lock().await;
+                let rates = match cache.prev_disk {
+                    // >100 ms window keeps a rapid recheck+poll pair from dividing by ~0.
+                    Some((at, pr, pw)) if curr.0 >= pr && curr.1 >= pw => {
+                        let secs = at.elapsed().as_secs_f64();
+                        (secs > 0.1).then(|| ((curr.0 - pr) as f64 / secs, (curr.1 - pw) as f64 / secs))
+                    }
+                    _ => None,
+                };
+                cache.prev_disk = Some((now, curr.0, curr.1));
+                match rates {
+                    Some((r, w)) => (Some(r), Some(w)),
+                    None => (None, None),
+                }
+            }
+            None => (None, None),
+        }
+    };
 
     // Slow GPU probe runs outside the lock so it can't stall other polls.
     let gpus = probe_nvidia().await;
@@ -570,8 +704,12 @@ pub async fn get_system_stats(
     let data = SystemStats {
         sampled_at_ms: now_ms(),
         cpu_percent,
-        ram_used_bytes: ram.0,
-        ram_total_bytes: ram.1,
+        ram_used_bytes: ram.used,
+        ram_total_bytes: ram.total,
+        ram_app_bytes: ram.app,
+        ram_wired_bytes: ram.wired,
+        ram_compressed_bytes: ram.compressed,
+        swap_used_bytes: ram.swap_used,
         disk_used_bytes: disk.0,
         disk_total_bytes: disk.1,
         disk_read_bps,

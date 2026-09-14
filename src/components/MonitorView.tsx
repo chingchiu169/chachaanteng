@@ -34,25 +34,57 @@ function fmtCount(v: number | null | undefined): string {
   return v === null || v === undefined ? "—" : Math.round(v).toLocaleString();
 }
 
+/** Fill color by load — app palette tokens (theme-aware), same hues as daisyUI's progress-*. */
 function barVariant(pct: number): string {
-  if (pct >= 85) return "progress-error";
-  if (pct >= 60) return "progress-warning";
-  return "progress-success";
+  if (pct >= 85) return "bg-red";
+  if (pct >= 60) return "bg-yellow";
+  return "bg-green";
 }
 
-function Bar({ label, used, total, extra }: { label: string; used: number | null; total: number; extra?: ReactNode }) {
+// WKWebView renders <progress> at its ~24px UA height and ignores daisyUI's .progress height
+// rule, so every bar in this view is a hand-rolled div — one shared track class keeps the rows
+// pixel-identical (8px tall).
+const TRACK_CLS = "flex h-2 w-full rounded-full bg-[color-mix(in_oklab,var(--color-base-content)_20%,transparent)]";
+
+function Bar({ label, used, total, extra, segments, valueText }: {
+  label: string;
+  used: number | null;
+  total: number;
+  extra?: ReactNode;
+  /** Stacked colored fill (the RAM breakdown) — replaces the single-color progress when non-empty. */
+  segments?: { value: number; cls: string; title?: string }[];
+  /** Right-hand readout override (CPU shows a %, not bytes). */
+  valueText?: string;
+}) {
   const pct = used !== null && total > 0 ? Math.min(100, (used / total) * 100) : null;
   return (
     <div className="space-y-1">
       <div className="flex justify-between items-center gap-2 text-xs">
         <span className="text-fg-muted flex items-center gap-2 min-w-0">{label}{extra}</span>
         <span className="font-mono text-fg-bright shrink-0">
-          {pct === null ? "—" : `${fmtBytes(used ?? 0)} / ${fmtBytes(total)} (${pct.toFixed(0)}%)`}
+          {valueText ?? (pct === null ? "—" : `${fmtBytes(used ?? 0)} / ${fmtBytes(total)} (${pct.toFixed(0)}%)`)}
         </span>
       </div>
-      {/* Always a real <progress> (value 0 when unknown) — daisyUI's .progress doesn't set display,
-          so div↔progress swaps change the line box and shift everything below. */}
-      <progress className={`progress ${pct !== null ? barVariant(pct) : ""}`} value={pct ?? 0} max={100} />
+      {segments && segments.length > 0 ? (
+        // daisyUI tooltips are ::before/::after on the segment itself, so no overflow:hidden
+        // here — end segments carry the corner rounding instead.
+        <div className={TRACK_CLS}>
+          {segments.map((s, i) => (
+            <div
+              key={i}
+              data-tip={s.title ? `${s.title}: ${fmtBytes(s.value)}` : fmtBytes(s.value)}
+              className={`tooltip ${s.cls} h-full ${i === 0 ? "rounded-l-full" : ""} ${i === segments.length - 1 ? "rounded-r-full" : ""}`}
+              style={{ width: `${Math.min(100, (s.value / total) * 100)}%` }}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className={TRACK_CLS}>
+          {pct !== null && (
+            <div className={`${barVariant(pct)} h-full rounded-full`} style={{ width: `${pct}%` }} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -184,6 +216,18 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
     }
   };
 
+  // macOS Activity-Monitor-style RAM breakdown — same counters AM reads (vm_stat/swapusage).
+  // Each part carries the color of its bar segment; the dots in the label row double as the legend.
+  // Windows reports nulls, so nothing renders there and the plain progress bar stays.
+  const ramParts = isMac() && stats
+    ? ([
+        [t("mon.ramApp"), "bg-accent", stats.ram_app_bytes],
+        [t("mon.ramWired"), "bg-cyan", stats.ram_wired_bytes],
+        [t("mon.ramCompressed"), "bg-yellow", stats.ram_compressed_bytes],
+      ] as [string, string, number | null][])
+        .filter((p): p is [string, string, number] => (p[2] ?? 0) > 0)
+    : [];
+
   return (
     <div className="h-full flex flex-col overflow-y-auto">
       {/* system */}
@@ -208,19 +252,37 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
           <div className="text-xs text-fg-faint">{t("mon.readingStats")}</div>
         ) : (
           <>
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="text-fg-muted">CPU</span>
-                <span className="font-mono text-fg-bright">{stats.cpu_percent !== null ? `${stats.cpu_percent.toFixed(1)}%` : t("mon.firstSample")}</span>
-              </div>
-              {/* Always a real <progress> — see the Bar note above on why div↔progress swaps shift layout. */}
-              <progress
-                className={`progress ${stats.cpu_percent !== null ? barVariant(Math.min(100, stats.cpu_percent)) : ""}`}
-                value={Math.min(100, stats.cpu_percent ?? 0)}
-                max={100}
-              />
-            </div>
-            <Bar label="RAM" used={stats.ram_used_bytes} total={stats.ram_total_bytes} />
+            {/* All three system rows go through Bar — identical DOM, so the heights can't drift. */}
+            <Bar
+              label="CPU"
+              used={stats.cpu_percent}
+              total={100}
+              valueText={stats.cpu_percent !== null ? `${stats.cpu_percent.toFixed(1)}%` : t("mon.firstSample")}
+            />
+            {/* RAM — on macOS the label row carries the breakdown (dots = bar-segment legend, like the
+                disk throughput arrows) and the bar itself is stacked per category. */}
+            <Bar
+              label="RAM"
+              used={stats.ram_used_bytes}
+              total={stats.ram_total_bytes}
+              segments={ramParts.length > 0 ? ramParts.map(([label, cls, v]) => ({ value: v, cls, title: label })) : undefined}
+              extra={
+                ramParts.length > 0 || stats.swap_used_bytes !== null ? (
+                  <span className="flex flex-wrap gap-x-2 font-mono text-[11px] text-fg-muted">
+                    {ramParts.map(([label, cls, v]) => (
+                      <span key={label} className="tooltip" data-tip={label}>
+                        <span className={`inline-block w-2 h-2 rounded-full mr-1 align-middle ${cls}`} />{fmtBytes(v)}
+                      </span>
+                    ))}
+                    {stats.swap_used_bytes !== null && stats.swap_used_bytes > 0 && (
+                      <span className="tooltip" data-tip={t("mon.swapUsed")}>
+                        <i className="fa-solid fa-right-left mr-1" aria-hidden />{fmtBytes(stats.swap_used_bytes)}
+                      </span>
+                    )}
+                  </span>
+                ) : undefined
+              }
+            />
             {/* Whole-system disk throughput (PDH rate counters) — inline after the label, always rendered
                 ("—" until the first valid sample) so nothing shifts when values arrive. */}
             <Bar
@@ -229,10 +291,11 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
               total={stats.disk_total_bytes}
               extra={
                 <span className="flex gap-2 font-mono text-[11px] text-fg-muted">
-                  <span title={t("mon.diskRead")}>
+                  {/* daisyUI tooltip — label only, the rate itself is already shown inline */}
+                  <span className="tooltip" data-tip={t("mon.diskRead")}>
                     <i className="fa-solid fa-arrow-up mr-1" aria-hidden />{stats.disk_read_bps !== null ? fmtRate(stats.disk_read_bps) : "—"}
                   </span>
-                  <span title={t("mon.diskWrite")}>
+                  <span className="tooltip" data-tip={t("mon.diskWrite")}>
                     <i className="fa-solid fa-arrow-down mr-1" aria-hidden />{stats.disk_write_bps !== null ? fmtRate(stats.disk_write_bps) : "—"}
                   </span>
                 </span>
@@ -259,11 +322,12 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
                       <span>{t("mon.utilization")}</span>
                       <span className="font-mono">{g.utilization_percent.toFixed(0)}%</span>
                     </div>
-                    <progress
-                      className={`progress ${barVariant(Math.min(100, g.utilization_percent))}`}
-                      value={Math.min(100, g.utilization_percent)}
-                      max={100}
-                    />
+                    <div className={TRACK_CLS}>
+                      <div
+                        className={`${barVariant(Math.min(100, g.utilization_percent))} h-full rounded-full`}
+                        style={{ width: `${Math.min(100, g.utilization_percent)}%` }}
+                      />
+                    </div>
                   </>
                 )}
                 {g.memory_total_bytes !== null && (

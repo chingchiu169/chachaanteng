@@ -252,10 +252,14 @@ export interface GitStatus {
   branch: string;
   /** "abc1234 subject line" of HEAD */
   head: string;
-  ahead: number;
-  behind: number;
+  /** highest semver tag on origin (e.g. "v0.1.0") — null when the repo has no release tags */
+  latest_release: string | null;
+  /** last release this checkout contains ("git describe --tags"); "" when HEAD predates all tags */
+  local_version: string;
+  /** true when origin has a newer release than what this checkout contains */
+  update_available: boolean;
   dirty: string[];
-  /** set when `git fetch` failed — behind/ahead may be stale */
+  /** set when `git fetch` failed — the release status may be stale */
   fetch_note?: string | null;
 }
 
@@ -264,7 +268,7 @@ export interface GitPullResult {
   stashed: boolean;
 }
 
-/** Fetch + report branch/HEAD/behind-ahead/dirty paths. Errors when not a git install. */
+/** Fetch + report branch/HEAD/latest-release-vs-local/dirty paths. Errors when not a git install. */
 export const gitUpdateStatus = () => invoke<GitStatus>("git_update_status");
 
 /** Auto-stash uncommitted work, `git pull --ff-only`, report the new HEAD. */
@@ -452,6 +456,11 @@ export interface SystemStats {
   cpu_percent: number | null;
   ram_used_bytes: number;
   ram_total_bytes: number;
+  /** macOS Activity-Monitor-style RAM breakdown (null on Windows or when unavailable). */
+  ram_app_bytes: number | null;
+  ram_wired_bytes: number | null;
+  ram_compressed_bytes: number | null;
+  swap_used_bytes: number | null;
   disk_used_bytes: number;
   disk_total_bytes: number;
   /** Whole-system disk throughput from PDH counters (null until the first valid sample). */
