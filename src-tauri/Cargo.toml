@@ -1,7 +1,7 @@
 [package]
 name = "chachaanteng"
 version = "0.1.0"
-description = "ChaChaanTeng - manage llama.cpp on Windows"
+description = "ChaChaanTeng - manage llama.cpp on Windows and macOS"
 edition = "2021"
 
 [lib]
@@ -27,6 +27,10 @@ base64 = "0.22"
 regex = "1"
 webbrowser = "1"
 chrono = { version = "0.4", features = ["clock"] }
+tar = "0.4"
+flate2 = "1"
+
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
 
 [profile.release]

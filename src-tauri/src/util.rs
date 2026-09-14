@@ -14,6 +14,23 @@ pub fn hide_console_std(cmd: &mut std::process::Command) {
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 }
 
+// Non-Windows no-ops so call sites stay identical across platforms (macOS children of a .app
+// never get a console window anyway).
+#[cfg(not(windows))]
+pub fn hide_console_tokio(_cmd: &mut tokio::process::Command) {}
+
+#[cfg(not(windows))]
+pub fn hide_console_std(_cmd: &mut std::process::Command) {}
+
+/// Executable file name for a llama.cpp tool on this OS ("llama-server" / "llama-server.exe").
+pub fn bin_name(tool: &str) -> String {
+    if cfg!(windows) {
+        format!("{tool}.exe")
+    } else {
+        tool.to_string()
+    }
+}
+
 /// Push a line into a capped ring buffer, dropping the oldest lines past `cap`.
 pub fn push_capped(q: &std::sync::Mutex<std::collections::VecDeque<String>>, line: String, cap: usize) {
     if let Ok(mut q) = q.lock() {
