@@ -1,11 +1,12 @@
 //! Per-server process telemetry — CPU% / working-set RAM for a running llama-server PID, plus
 //! per-process NVIDIA GPU utilization (pmon) and VRAM (query-compute-apps).
 //!
-//! Read-only; mirrors system_stats.rs conventions: raw FFI, bounded `nvidia-smi` probes with
-//! kill_on_drop + 2 s timeout, None/empty on any failure. CPU% is a delta between samples — the
-//! first sample for a PID has no baseline → null.
+//! Read-only; mirrors system_stats.rs conventions: raw FFI (Windows) / bounded `ps` probes
+//! (macOS), bounded `nvidia-smi` probes with kill_on_drop + 2 s timeout, None/empty on any
+//! failure. CPU% is a delta between samples — the first sample for a PID has no baseline → null.
 
 use serde::Serialize;
+#[cfg(windows)]
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 use tauri::State;
@@ -14,12 +15,14 @@ use tauri::State;
 // Windows FFI (kernel32 + psapi)
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 #[repr(C)]
 struct FILETIME {
     low: u32,
     high: u32,
 }
 
+#[cfg(windows)]
 impl FILETIME {
     fn to_u64(&self) -> u64 {
         ((self.high as u64) << 32) | (self.low as u64)
@@ -27,6 +30,7 @@ impl FILETIME {
 }
 
 /// PROCESS_MEMORY_COUNTERS from psapi — only the fields we read.
+#[cfg(windows)]
 #[repr(C)]
 struct ProcessMemoryCounters {
     cb: u32,
@@ -41,10 +45,14 @@ struct ProcessMemoryCounters {
     peak_page_file_usage: *mut c_void,
 }
 
+#[cfg(windows)]
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+#[cfg(windows)]
 const PROCESS_QUERY_INFORMATION: u32 = 0x0400;
+#[cfg(windows)]
 const PROCESS_VM_READ: u32 = 0x0010;
 
+#[cfg(windows)]
 extern "system" {
     fn OpenProcess(dwdesiredaccess: u32, binherithandle: i32, dwprocessid: u32) -> *mut c_void;
     fn CloseHandle(hobject: *mut c_void) -> i32;
@@ -57,6 +65,7 @@ extern "system" {
     ) -> i32;
 }
 
+#[cfg(windows)]
 #[link(name = "psapi")]
 extern "system" {
     fn K32GetProcessMemoryInfo(
@@ -66,8 +75,9 @@ extern "system" {
     ) -> i32;
 }
 
-/// Cumulative user+kernel CPU time of a process in 100 ns units (None if the handle can't be opened).
-fn process_cpu_time_100ns(pid: u32) -> Option<u64> {
+/// Cumulative user+kernel CPU time of a process in platform units (Windows: 100 ns ticks).
+#[cfg(windows)]
+fn cpu_time_units(pid: u32) -> Option<u64> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if h.is_null() {
@@ -88,6 +98,7 @@ fn process_cpu_time_100ns(pid: u32) -> Option<u64> {
 }
 
 /// Working-set size in bytes (None on failure).
+#[cfg(windows)]
 fn process_working_set_bytes(pid: u32) -> Option<u64> {
     unsafe {
         // K32GetProcessMemoryInfo needs PROCESS_QUERY_INFORMATION — VM_READ alone is not enough.
@@ -106,6 +117,59 @@ fn process_working_set_bytes(pid: u32) -> Option<u64> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// macOS (bounded `ps` probes — no FFI needed)
+// ---------------------------------------------------------------------------
+
+/// Cumulative user+kernel CPU time of a process in whole seconds (`ps cputime`).
+#[cfg(not(windows))]
+fn cpu_time_units(pid: u32) -> Option<u64> {
+    // ps cputime has 1-second granularity → CPU% is quantized (±a few % at a 2 s poll); fine for v1.
+    let out = std::process::Command::new("ps")
+        .args(["-o", "cputime=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    parse_ps_cputime(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Resident set size in bytes (`ps rss` reports KB).
+#[cfg(not(windows))]
+fn process_working_set_bytes(pid: u32) -> Option<u64> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|kb| kb * 1024)
+}
+
+/// Parse `ps` cputime ("H:MM:SS" or "D-HH:MM:SS") into whole seconds.
+#[cfg(not(windows))]
+fn parse_ps_cputime(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (days, hms) = match s.split_once('-') {
+        Some((d, rest)) => (d.parse::<u64>().ok()? * 86_400, rest),
+        None => (0, s),
+    };
+    let mut parts = hms.split(':');
+    let h = parts.next()?.parse::<u64>().ok()?;
+    let m = parts.next()?.parse::<u64>().ok()?;
+    let sec = parts.next()?.parse::<u64>().ok()?;
+    if parts.next().is_some() {
+        return None; // more than H:MM:SS — unexpected shape
+    }
+    Some(days + h * 3600 + m * 60 + sec)
+}
+
+/// Conversion factor from platform CPU-time units to milliseconds.
+const UNITS_TO_MS: f64 = if cfg!(windows) { 0.0001 } else { 1000.0 };
+
 /// Per-PID CPU baseline — cumulative 100 ns units + wall-clock instant of the last sample.
 static CPU_BASELINES: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<u32, (Instant, u64)>>,
@@ -113,7 +177,7 @@ static CPU_BASELINES: std::sync::LazyLock<
 
 /// CPU busy % across all logical processors; None on the first sample or a stale baseline.
 fn process_cpu_percent(pid: u32, num_procs: usize) -> Option<f64> {
-    let now_units = match process_cpu_time_100ns(pid) {
+    let now_units = match cpu_time_units(pid) {
         Some(u) => u,
         // Process gone (or unreadable) — drop any stale baseline so the map can't grow forever.
         None => {
@@ -142,8 +206,8 @@ fn process_cpu_percent(pid: u32, num_procs: usize) -> Option<f64> {
     if dt_ms <= 0.0 {
         return None;
     }
-    // FILETIME units are 100 ns → ms: /10_000
-    let cpu_ms = (now_units - prev.1) as f64 / 10_000.0;
+    // Platform units → ms (Windows: 100 ns ticks /10_000; macOS: seconds ×1000).
+    let cpu_ms = (now_units - prev.1) as f64 * UNITS_TO_MS;
     Some((cpu_ms / dt_ms * 100.0 / num_procs.max(1) as f64).min(100.0))
 }
 
@@ -259,6 +323,7 @@ mod tests {
     use super::*;
 
     /// The FFI path must not crash when run headless — a segfault here is what took the app down at startup.
+    #[cfg(windows)]
     #[test]
     fn own_pid_cpu_and_ram() {
         let pid = std::process::id();

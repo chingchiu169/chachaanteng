@@ -18,18 +18,21 @@ use tauri::{AppHandle, Manager, State};
 // Windows FFI (kernel32 — linked by default on MSVC targets)
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 #[repr(C)]
 struct FILETIME {
     low: u32,
     high: u32,
 }
 
+#[cfg(windows)]
 impl FILETIME {
     fn to_u64(&self) -> u64 {
         ((self.high as u64) << 32) | (self.low as u64)
     }
 }
 
+#[cfg(windows)]
 #[repr(C)]
 struct MEMORYSTATUSEX {
     dw_length: u32,
@@ -43,6 +46,7 @@ struct MEMORYSTATUSEX {
     ull_avail_extended_virtual: u64,
 }
 
+#[cfg(windows)]
 extern "system" {
     fn GetSystemTimes(
         lp_idle_time: *mut FILETIME,
@@ -62,6 +66,7 @@ extern "system" {
 // Performance Data Helper (pdh.dll) — whole-system disk throughput
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 #[link(name = "pdh")]
 extern "system" {
     fn PdhOpenQueryW(
@@ -86,9 +91,11 @@ extern "system" {
 }
 
 /// `PDH_FMT_DOUBLE` from um/pdh.h — the value comes back as a C double.
+#[cfg(windows)]
 const PDH_FMT_DOUBLE: u32 = 0x0000_0200;
 
 /// Layout of `PDH_FMT_COUNTERVALUE`: status DWORD + union whose first member is a double.
+#[cfg(windows)]
 #[repr(C)]
 struct PdhFmtCounterValue {
     c_status: u32,
@@ -96,15 +103,19 @@ struct PdhFmtCounterValue {
 }
 
 /// One open PDH query + counter for a rate counter (closed on drop).
+#[cfg(windows)]
 struct PdhRate {
     query: *mut c_void,
     counter: *mut c_void,
 }
 
 // PDH handles are only ever touched behind the `SysStatsCache` mutex, so manual Send/Sync is sound.
+#[cfg(windows)]
 unsafe impl Send for PdhRate {}
+#[cfg(windows)]
 unsafe impl Sync for PdhRate {}
 
+#[cfg(windows)]
 impl Drop for PdhRate {
     fn drop(&mut self) {
         if !self.query.is_null() {
@@ -115,11 +126,13 @@ impl Drop for PdhRate {
 
 /// Whole-system disk throughput via the `\PhysicalDisk(_Total)` rate counters — the same
 /// source Task Manager reads. English counter names keep this working on localized Windows.
+#[cfg(windows)]
 struct DiskIo {
     read: PdhRate,
     write: PdhRate,
 }
 
+#[cfg(windows)]
 fn open_pdh_rate(counter_path: &str) -> Option<PdhRate> {
     let mut query = std::ptr::null_mut();
     // NULL data source = local computer.
@@ -138,6 +151,7 @@ fn open_pdh_rate(counter_path: &str) -> Option<PdhRate> {
     Some(PdhRate { query, counter })
 }
 
+#[cfg(windows)]
 impl DiskIo {
     fn open() -> Option<Self> {
         Some(Self {
@@ -172,6 +186,7 @@ impl DiskIo {
 
 /// Cumulative CPU counters via `GetSystemTimes`. Kernel time already includes
 /// idle, so total = kernel + user. Returns `(total_ticks, idle_ticks)`.
+#[cfg(windows)]
 fn cpu_counters() -> Option<(u64, u64)> {
     let mut idle = FILETIME { low: 0, high: 0 };
     let mut kernel = FILETIME { low: 0, high: 0 };
@@ -187,7 +202,52 @@ fn cpu_counters() -> Option<(u64, u64)> {
     Some((total, idle_ticks))
 }
 
+/// Cumulative CPU counters on macOS via Mach `host_statistics(HOST_CPU_LOAD_INFO)` — four
+/// cumulative tick counters (user/system/idle/nice); total = all four. Returns `(total, idle)`.
+#[cfg(not(windows))]
+fn cpu_counters() -> Option<(u64, u64)> {
+    extern "C" {
+        fn host_self(host_port: *mut u32) -> i32; // KERN_SUCCESS = 0
+        fn host_statistics(target_host: u32, flavor: i32, info: *mut c_void, count: *mut u32) -> i32;
+    }
+
+    /// `host_cpu_load_info_data_t` — four natural_t tick counters.
+    #[repr(C)]
+    struct HostCpuLoadInfo {
+        user: u32,
+        system: u32,
+        idle: u32,
+        nice: u32,
+    }
+
+    const HOST_CPU_LOAD_INFO: i32 = 3;
+
+    let mut host: u32 = 0; // mach ports are uint32 on all current Apple platforms
+    if unsafe { host_self(&mut host) } != 0 {
+        return None;
+    }
+    let mut info = std::mem::zeroed::<HostCpuLoadInfo>();
+    let mut count: u32 = 4; // CPU_STATE_MAX
+    if unsafe {
+        host_statistics(
+            host,
+            HOST_CPU_LOAD_INFO,
+            &mut info as *mut _ as *mut c_void,
+            &mut count,
+        )
+    } != 0
+    {
+        return None;
+    }
+    let total = (info.user + info.system + info.idle + info.nice) as u64;
+    if total == 0 {
+        return None;
+    }
+    Some((total, info.idle as u64))
+}
+
 /// System RAM as `(used_bytes, total_bytes)` via `GlobalMemoryStatusEx`.
+#[cfg(windows)]
 fn memory() -> Option<(u64, u64)> {
     let mut status = MEMORYSTATUSEX {
         dw_length: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
@@ -211,7 +271,55 @@ fn memory() -> Option<(u64, u64)> {
     Some((total - available, total))
 }
 
+/// System RAM on macOS as `(used_bytes, total_bytes)` — total via the `hw.memsize` sysctl,
+/// free pages from `vm_stat`. "Available memory" semantics, not Windows working-set.
+#[cfg(not(windows))]
+fn memory() -> Option<(u64, u64)> {
+    extern "C" {
+        fn sysctlbyname(
+            name: *const i8,
+            oldp: *mut c_void,
+            oldlenp: *mut usize,
+            newp: *const c_void,
+            newlen: usize,
+        ) -> i32;
+    }
+
+    let mut total: u64 = 0;
+    let mut len = std::mem::size_of::<u64>();
+    if unsafe {
+        sysctlbyname(
+            b"hw.memsize\0".as_ptr() as *const i8,
+            &mut total as *mut _ as *mut c_void,
+            &mut len,
+            std::ptr::null(),
+            0,
+        )
+    } != 0
+        || total == 0
+    {
+        return None;
+    }
+
+    // vm_stat: "Mach Virtual Memory Statistics: (page size of 16384 bytes)" + "Pages free: N."
+    let out = std::process::Command::new("vm_stat").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let page_size: u64 = text.lines().find_map(|l| {
+        let rest = l.split_once("page size of ")?.1;
+        rest.split(')').next()?.trim().parse().ok()
+    })?;
+    let free_pages: u64 = text.lines().find_map(|l| {
+        let rest = l.trim().strip_prefix("Pages free:")?;
+        rest.trim().trim_end_matches('.').parse().ok()
+    })?;
+    if page_size == 0 {
+        return None;
+    }
+    Some((total.saturating_sub(free_pages * page_size), total))
+}
+
 /// Disk usage `(used_bytes, total_bytes)` for the drive holding `path`.
+#[cfg(windows)]
 fn disk_usage(path: &str) -> Option<(u64, u64)> {
     // GetDiskFreeSpaceExW wants a directory; the drive root ("C:\") is enough.
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
@@ -228,6 +336,31 @@ fn disk_usage(path: &str) -> Option<(u64, u64)> {
         return None;
     }
     Some((total - free_total, total))
+}
+
+/// Disk usage `(used_bytes, total_bytes)` of the system volume via `statfs("/")`.
+#[cfg(not(windows))]
+fn disk_usage(_path: &str) -> Option<(u64, u64)> {
+    extern "C" {
+        fn statfs(path: *const i8, buf: *mut StatfsPrefix) -> i32;
+    }
+
+    /// Prefix of BSD `struct statfs` — only the fields we read (layout matches C).
+    #[repr(C)]
+    struct StatfsPrefix {
+        fs_type: i32,
+        f_flags: u32,
+        f_bsize: u32,
+        f_blocks: u64,
+        f_bfree: u64,
+    }
+
+    let mut buf = std::mem::zeroed::<StatfsPrefix>();
+    if unsafe { statfs(b"/\0".as_ptr() as *const i8, &mut buf) } != 0 || buf.f_blocks == 0 {
+        return None;
+    }
+    let bsize = buf.f_bsize as u64;
+    Some((buf.f_blocks.saturating_sub(buf.f_bfree) * bsize, buf.f_blocks * bsize))
 }
 
 /// CPU busy % from cumulative counter deltas. `None` on rollback or a
@@ -359,13 +492,16 @@ const CACHE_TTL: Duration = Duration::from_secs(2);
 pub struct SysStatsCache {
     prev_cpu: Option<(u64, u64)>,
     cached: Option<(Instant, SystemStats)>,
-    /// Lazily opened PDH rate counters for whole-system disk throughput.
+    /// Lazily opened PDH rate counters for whole-system disk throughput (Windows only).
+    #[cfg(windows)]
     disk_io: Option<DiskIo>,
 }
 
 impl Default for SysStatsCache {
     fn default() -> Self {
-        Self { prev_cpu: None, cached: None, disk_io: None }
+        #[cfg(windows)]
+        let disk_io = None;
+        Self { prev_cpu: None, cached: None, #[cfg(windows)] disk_io }
     }
 }
 
@@ -413,6 +549,7 @@ pub async fn get_system_stats(
     };
 
     // Whole-system disk throughput — lazily open the PDH queries, then advance + read.
+    #[cfg(windows)]
     let (disk_read_bps, disk_write_bps) = {
         let mut cache = state.sys_stats.lock().await;
         if cache.disk_io.is_none() {
@@ -423,6 +560,9 @@ pub async fn get_system_stats(
             None => (None, None),
         }
     };
+    // No throughput source on macOS — the Monitor tiles render "—" for null.
+    #[cfg(not(windows))]
+    let (disk_read_bps, disk_write_bps): (Option<f64>, Option<f64>) = (None, None);
 
     // Slow GPU probe runs outside the lock so it can't stall other polls.
     let gpus = probe_nvidia().await;
