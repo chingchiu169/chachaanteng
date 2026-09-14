@@ -168,7 +168,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                // Windows-only: kill any orphaned llama-server / benchmark processes
+                // Kill any orphaned llama-server / benchmark processes on exit
                 let state = app_handle.state::<AppState>();
                 // Skip re-adopted (externally started) servers — they outlived the previous app
                 // session on purpose; killing them here would surprise the user. They get

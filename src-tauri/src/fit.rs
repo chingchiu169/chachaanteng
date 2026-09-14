@@ -157,7 +157,7 @@ fn parse_memory_estimate_output(output: &str) -> Result<serde_json::Value, Strin
 pub async fn estimate_memory(engine_exe: String, args: Vec<String>) -> Result<serde_json::Value, String> {
     let exe = PathBuf::from(&engine_exe);
     let dir = exe.parent().ok_or("invalid engine path")?;
-    let fitp = dir.join("llama-fit-params.exe");
+    let fitp = dir.join(crate::util::bin_name("llama-fit-params"));
     if !fitp.exists() {
         return Err("llama-fit-params not found in the engine directory".into());
     }

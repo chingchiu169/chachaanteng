@@ -67,7 +67,7 @@ pub async fn bench_start(
     let exe = std::path::Path::new(&engine_exe)
         .parent()
         .ok_or_else(|| "Engine path has no parent directory".to_string())?
-        .join(format!("{tool}.exe"));
+        .join(crate::util::bin_name(&tool));
     if !exe.is_file() {
         return Err(format!(
             "{} not found next to the engine ({}).",

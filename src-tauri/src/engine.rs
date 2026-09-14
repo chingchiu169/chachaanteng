@@ -49,6 +49,7 @@ pub struct ServerInfo {
 /// Ring-buffer cap for in-memory server logs.
 const LOG_CAP: usize = 2048;
 
+#[cfg(windows)]
 pub fn kill_pid(pid: u32) {
     if pid == 0 {
         return;
@@ -57,6 +58,15 @@ pub fn kill_pid(pid: u32) {
     let mut cmd = std::process::Command::new("taskkill");
     crate::util::hide_console_std(&mut cmd);
     let _ = cmd.args(["/F", "/T", "/PID", &pid.to_string()]).output();
+}
+
+#[cfg(not(windows))]
+pub fn kill_pid(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    // llama-server / cloudflared spawn no children of their own, so a direct signal suffices.
+    let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).output();
 }
 
 /// Async-context variant of [kill_pid] — taskkill's duration is unbounded on a loaded system,
@@ -316,6 +326,7 @@ fn parse_model(cmdline: &str) -> Option<String> {
 }
 
 /// (pid, port, model) parsed from the ConvertTo-Json process enumeration output.
+#[cfg(windows)]
 fn parse_process_rows(json: &str) -> Vec<(u32, u16, String)> {
     // WMI/Select-Object emit PascalCase keys — serde matches case-sensitively by default.
     #[derive(serde::Deserialize)]
@@ -338,6 +349,7 @@ fn parse_process_rows(json: &str) -> Vec<(u32, u16, String)> {
 }
 
 /// (pid, port, model) for every running llama-server.exe with a parseable local port.
+#[cfg(windows)]
 fn enumerate_llama_server_processes() -> Vec<(u32, u16, String)> {
     // -InputObject forces ConvertTo-Json to emit an array even for a single row;
     // empty input prints nothing (handled below).
@@ -362,10 +374,38 @@ fn enumerate_llama_server_processes() -> Vec<(u32, u16, String)> {
     parse_process_rows(&text)
 }
 
+/// (pid, port, model) for every running llama-server with a parseable local port.
+#[cfg(not(windows))]
+fn enumerate_llama_server_processes() -> Vec<(u32, u16, String)> {
+    // -axww = all processes, unlimited width (long model paths must not be truncated).
+    let out = match std::process::Command::new("ps")
+        .args(["-axww", "-o", "pid=,command="])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.split_whitespace();
+            let pid: u32 = it.next()?.parse().ok()?;
+            let cmd = it.collect::<Vec<_>>().join(" ");
+            // Match the executable basename, not a substring (avoids "my-llama-server-tool").
+            let exe = cmd.split_whitespace().next().unwrap_or("");
+            if std::path::Path::new(exe).file_name()?.to_str()? != crate::util::bin_name("llama-server") {
+                return None;
+            }
+            Some((pid, parse_port(&cmd)?, parse_model(&cmd).unwrap_or_default()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
     fn parses_real_wmi_output_shape() {
         // Captured verbatim from Get-CimInstance on the dev machine (2026-09-10):
