@@ -1,9 +1,13 @@
 //! FR8.2 — Git auto-update for dev installs (ported from the reference's stash-updates flow).
 //!
 //! Only works when the app was installed from a git checkout: we locate the repo root by walking up
-//! from the exe directory, report upstream status (fetch + behind/ahead + dirty paths), and pull with
-//! an automatic `git stash -u` so uncommitted work is never lost. Release builds have no .git above
-//! the exe and simply report "not a git install".
+//! from the exe directory, report upstream status (fetch + latest release tag vs what this checkout
+//! contains + dirty paths), and pull with an automatic `git stash -u` so uncommitted work is never
+//! lost. Release builds have no .git above the exe and simply report "not a git install".
+//!
+//! The update check compares RELEASES, not branch tips: main moves constantly with unreleased work,
+//! but users only care whether a newer tagged release exists. Tags are read via git itself (the repo
+//! is private — no unauthenticated GitHub API access).
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -16,12 +20,15 @@ pub struct GitStatus {
     pub branch: String,
     /// "abc1234 subject line" of HEAD
     pub head: String,
-    /// commits local is ahead of / behind upstream (0/0 when no upstream)
-    pub ahead: u32,
-    pub behind: u32,
+    /// highest semver tag on origin (e.g. "v0.1.0") — None when the repo has no release tags
+    pub latest_release: Option<String>,
+    /// last release this checkout contains (`git describe --tags`); empty when HEAD predates all tags
+    pub local_version: String,
+    /// true when origin has a newer release than what this checkout contains
+    pub update_available: bool,
     /// porcelain paths with uncommitted changes
     pub dirty: Vec<String>,
-    /// set when `git fetch` failed — behind/ahead may then be stale
+    /// set when `git fetch` failed — the release status may then be stale
     pub fetch_note: Option<String>,
 }
 
@@ -103,35 +110,71 @@ async fn head_line(repo: &std::path::Path) -> Result<String, String> {
     run_git(repo, &["log", "-1", "--format=%h %s"], 10).await
 }
 
+/// "v1.2.3" / "1.2.3" → [1, 2, 3]; None for anything else (prereleases like v1.0.0-rc1 aren't releases).
+fn semver_parts(tag: &str) -> Option<Vec<u64>> {
+    let t = tag.strip_prefix('v').unwrap_or(tag);
+    if t.is_empty() || t.starts_with('.') || t.ends_with('.') || t.contains("..") {
+        return None;
+    }
+    t.split('.').map(|p| p.parse::<u64>()).collect::<Result<Vec<u64>, _>>().ok()
+}
+
+/// True when `a` is strictly newer than `b`; missing parts count as 0 ("1.2" == "1.2.0").
+fn semver_newer(a: &[u64], b: &[u64]) -> bool {
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// Highest semver tag from `for-each-ref` output (one ref name per line); None when no release tags.
+fn latest_release_tag(refs: &str) -> Option<String> {
+    refs.lines()
+        .filter_map(|line| {
+            let name = line.trim();
+            Some((semver_parts(name)?, name.to_string()))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, name)| name)
+}
+
 #[tauri::command]
 pub async fn git_update_status() -> Result<GitStatus, String> {
     let repo = repo_root()?;
     let branch = run_git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"], 10).await?;
     let head = head_line(&repo).await?;
 
-    // Fetch is best-effort: offline still gets a (possibly stale) local status.
-    let fetch_note = match run_git(&repo, &["fetch", "origin", &branch], FETCH_TIMEOUT_SECS).await {
+    // Fetch is best-effort: offline still gets a (possibly stale) local status. --tags keeps the
+    // local tag refs in sync so the release comparison below sees what's actually on origin.
+    let fetch_note = match run_git(&repo, &["fetch", "origin", "--tags"], FETCH_TIMEOUT_SECS).await {
         Ok(_) => None,
-        Err(e) => Some(format!("fetch 失敗 ({e}) — behind/ahead 可能係舊數據")),
+        Err(e) => Some(format!("fetch 失敗 ({e}) — release 狀態可能係舊數據")),
     };
 
-    let (ahead, behind) = match run_git(&repo, &["rev-list", "--left-right", "--count", "HEAD...@{u}"], 10).await {
-        Ok(counts) => {
-            // "3\t2" → left = ahead of upstream, right = behind
-            let mut parts = counts.split_whitespace();
-            (
-                parts.next().and_then(|n| n.parse().ok()).unwrap_or(0),
-                parts.next().and_then(|n| n.parse().ok()).unwrap_or(0),
-            )
-        }
-        Err(_) => (0, 0), // no upstream configured — not an error for a fresh branch
+    // Latest release on origin = highest semver tag (fetched above); non-semver tags are ignored.
+    let refs = run_git(&repo, &["for-each-ref", "refs/tags", "--format=%(refname:short)"], 10).await?;
+    let latest_release = latest_release_tag(&refs);
+
+    // Last release this checkout contains — empty when HEAD predates every tag.
+    let local_version = run_git(&repo, &["describe", "--tags", "--abbrev=0", "HEAD"], 10)
+        .await
+        .unwrap_or_default();
+
+    let update_available = match (&latest_release, semver_parts(&local_version)) {
+        (Some(latest), Some(local)) => semver_newer(&semver_parts(latest).unwrap(), &local),
+        (Some(_), None) => true, // origin has releases but this checkout contains none of them
+        (None, _) => false,
     };
 
     let porcelain = run_git(&repo, &["status", "--porcelain"], 10).await?;
     Ok(GitStatus {
         head,
-        ahead,
-        behind,
+        latest_release,
+        local_version,
+        update_available,
         dirty: dirty_paths(&porcelain),
         fetch_note,
         branch,

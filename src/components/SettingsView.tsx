@@ -295,6 +295,19 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
   // Engine select options — prefer locally-installed builds over the bundled engine list.
   const engineOptions = installed.length > 0 ? installed : engines;
 
+  /** Toggle the clock format — persists immediately (like language/theme), no Save needed. */
+  const toggle24h = async (checked: boolean) => {
+    setUse24h(checked);
+    try {
+      const s = await getSettings();
+      const next = { ...s, use_24h: checked };
+      await saveSettings(next);
+      setSettings(next);
+    } catch {
+      /* non-fatal — the Save button below still persists it */
+    }
+  };
+
   const save = async () => {
     try {
       const s = await getSettings();
@@ -354,7 +367,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
               </select>
             </label>
             <label className="text-xs text-fg-muted flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" className="checkbox checkbox-xs" checked={use24h} onChange={(e) => setUse24h(e.target.checked)} />
+              <input type="checkbox" className="checkbox checkbox-xs" checked={use24h} onChange={(e) => void toggle24h(e.target.checked)} />
               {t("settings.use24h")}
             </label>
           </div>
@@ -620,20 +633,17 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
                   {git.head}
                 </span>
               </div>
+              {/* release-based status — main moves constantly, but only tagged releases matter */}
               <div className="flex items-center gap-2 flex-wrap">
-                {git.behind > 0 ? (
+                {git.update_available ? (
                   <span className="badge badge-sm badge-soft badge-warning">
                     <i className="fa-solid fa-arrow-down mr-1" aria-hidden />
-                    {t("settings.behindUpstream", { n: git.behind })}
+                    {t("settings.newRelease", { release: git.latest_release ?? "?", local: git.local_version || "—" })}
                   </span>
+                ) : git.latest_release ? (
+                  <span className="text-[11px] text-green"><i className="fa-solid fa-check mr-1" aria-hidden />{t("settings.upToDate")} ({git.latest_release})</span>
                 ) : (
-                  <span className="text-[11px] text-green"><i className="fa-solid fa-check mr-1" aria-hidden />{t("settings.upToDate")}</span>
-                )}
-                {git.ahead > 0 && (
-                  <span className="badge badge-sm badge-soft badge-accent">
-                    <i className="fa-solid fa-arrow-up mr-1" aria-hidden />
-                    {t("settings.ahead", { n: git.ahead })}
-                  </span>
+                  <span className="text-[11px] text-fg-muted">{t("settings.noReleases")}</span>
                 )}
               </div>
               {git.dirty.length > 0 && (
@@ -653,7 +663,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
                 </button>
                 <button
                   onClick={doPull}
-                  disabled={pulling || git.behind === 0}
+                  disabled={pulling || !git.update_available}
                   className="btn btn-primary btn-xs"
                 >
                   {pulling ? t("settings.pulling") : t("settings.pullBtn")}
