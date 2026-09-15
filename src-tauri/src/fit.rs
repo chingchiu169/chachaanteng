@@ -134,7 +134,6 @@ fn parse_memory_estimate_output(output: &str) -> Result<serde_json::Value, Strin
             "model_mib": model,
             "context_mib": context,
             "compute_mib": compute,
-            "total_mib": model + context + compute,
         }));
     }
     if rows.is_empty() {

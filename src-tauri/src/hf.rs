@@ -120,7 +120,6 @@ pub fn model_shard_files(filename: &str) -> Result<Vec<String>, String> {
 pub struct HfFile {
     pub name: String,
     pub size: Option<u64>,
-    pub size_mb: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shard_count: Option<usize>,
 }
@@ -134,8 +133,7 @@ pub struct HfRepoFiles {
 }
 
 fn to_hf_file(name: &str, size: Option<u64>) -> HfFile {
-    let size_mb = size.map(|s| ((s as f64 / 1_048_576.0) * 100.0).round() / 100.0);
-    HfFile { name: name.to_string(), size, size_mb, shard_count: None }
+    HfFile { name: name.to_string(), size, shard_count: None }
 }
 
 #[derive(Deserialize)]
@@ -235,7 +233,6 @@ pub async fn hf_list_repo_files(repo_id: String, revision: String) -> Result<HfR
             let mut merged = item.clone();
             merged.shard_count = Some(shards.len());
             merged.size = total;
-            merged.size_mb = total.map(|t| ((t as f64 / 1_048_576.0) * 100.0).round() / 100.0);
             main_files.push(merged);
         } else {
             main_files.push(item.clone());
@@ -254,7 +251,6 @@ pub async fn hf_list_repo_files(repo_id: String, revision: String) -> Result<HfR
 pub struct HfModelHit {
     pub id: String,
     pub downloads: u64,
-    pub likes: u64,
 }
 
 #[derive(Deserialize)]
@@ -263,8 +259,6 @@ struct HfSearchResult {
     id: String,
     #[serde(default)]
     downloads: Option<u64>,
-    #[serde(default)]
-    likes: Option<u64>,
 }
 
 /// Search the HF model hub. `gguf_only` restricts to repos tagged "gguf".
@@ -302,7 +296,7 @@ pub async fn hf_search_models(query: String, gguf_only: bool) -> Result<Vec<HfMo
     Ok(results
         .into_iter()
         .filter(|r| !r.id.is_empty())
-        .map(|r| HfModelHit { id: r.id, downloads: r.downloads.unwrap_or(0), likes: r.likes.unwrap_or(0) })
+        .map(|r| HfModelHit { id: r.id, downloads: r.downloads.unwrap_or(0) })
         .collect())
 }
 
@@ -315,9 +309,6 @@ struct GgufBlock {
     /// GGUF architecture string, e.g. "nemotron_h" / "llama" / "qwen2".
     #[serde(default)]
     architecture: Option<String>,
-    /// Total parameter count of the parsed GGUF — a property of the model itself, identical across quants and publishers.
-    #[serde(default)]
-    total: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -326,12 +317,6 @@ struct ModelInfoRaw {
     id: String,
     #[serde(default)]
     author: String,
-    #[serde(default, rename = "pipeline_tag")]
-    pipeline_tag: Option<String>,
-    #[serde(default)]
-    downloads: Option<u64>,
-    #[serde(default)]
-    likes: Option<u64>,
     /// Present only for repos where HF parsed a GGUF header.
     #[serde(default)]
     gguf: Option<GgufBlock>,
@@ -341,16 +326,9 @@ struct ModelInfoRaw {
 pub struct HfModelInfo {
     pub id: String,
     pub author: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pipeline_tag: Option<String>,
-    pub downloads: u64,
-    pub likes: u64,
     /// GGUF architecture string (e.g. "nemotron_h") — None for repos without parsed GGUF metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gguf_architecture: Option<String>,
-    /// Total parameter count from the repo's parsed GGUF header, if present.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gguf_total_params: Option<u64>,
 }
 
 /// Fetch a single repo's info — `GET /api/models/{repo}` (the same endpoint fetch_default_branch uses).
@@ -367,18 +345,10 @@ pub async fn hf_model_info(repo_id: String) -> Result<HfModelInfo, String> {
         return Err(format!("Hugging Face lookup failed (HTTP {})", resp.status()));
     }
     let raw: ModelInfoRaw = resp.json().await.map_err(|e| format!("HF API parse error: {e}"))?;
-    let (gguf_architecture, gguf_total_params) = match raw.gguf {
-        Some(g) => (g.architecture, g.total),
-        None => (None, None),
-    };
     Ok(HfModelInfo {
         id: raw.id,
         author: raw.author,
-        pipeline_tag: raw.pipeline_tag,
-        downloads: raw.downloads.unwrap_or(0),
-        likes: raw.likes.unwrap_or(0),
-        gguf_architecture,
-        gguf_total_params,
+        gguf_architecture: raw.gguf.and_then(|g| g.architecture),
     })
 }
 
@@ -782,19 +752,14 @@ pub async fn hf_get_download_status(state: State<'_, AppState>) -> Result<HfDown
 #[derive(Serialize)]
 pub struct ModelsDirInfo {
     pub models_dir: String,
-    pub is_default: bool,
 }
 
 #[tauri::command]
 pub async fn get_models_dir_info(app: AppHandle, state: State<'_, AppState>) -> Result<ModelsDirInfo, String> {
     let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
-    let configured = db
-        .get_setting("settings")
-        .map_err(|e| format!("Failed to read settings: {e}"))?
-        .and_then(|json| serde_json::from_str::<Settings>(&json).ok())
-        .and_then(|s| s.models_dir.clone());
+    // get_models_dir reads the settings row itself — no second read needed here.
     let dir = get_models_dir(&app, &db)?;
-    Ok(ModelsDirInfo { models_dir: dir.to_string_lossy().into_owned(), is_default: configured.is_none() })
+    Ok(ModelsDirInfo { models_dir: dir.to_string_lossy().into_owned() })
 }
 
 #[derive(Serialize)]

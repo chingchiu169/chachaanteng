@@ -41,7 +41,6 @@ pub struct ServerEntry {
 #[derive(Serialize)]
 pub struct ServerInfo {
     pub port: u16,
-    pub pid: u32,
     pub model_path: String,
     pub reconnected: bool,
 }
@@ -294,7 +293,6 @@ async fn spawn_server(
 
     Ok(ServerInfo {
         port,
-        pid,
         model_path,
         reconnected: false,
     })
@@ -335,7 +333,6 @@ pub async fn list_servers(state: State<'_, AppState>) -> Result<Vec<ServerInfo>,
         .iter()
         .map(|(port, e)| ServerInfo {
             port: *port,
-            pid: e.pid,
             model_path: e.model_path.clone(),
             reconnected: e.reconnected,
         })

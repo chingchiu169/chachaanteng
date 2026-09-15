@@ -80,8 +80,6 @@ export const deleteServerLog = (name: string) => invoke<void>("delete_server_log
 export interface PresetInfo {
   name: string;
   data: Record<string, unknown>;
-  created_ms: number;
-  modified_ms: number;
   archived: boolean;
 }
 
@@ -193,13 +191,9 @@ export interface ExternalTarget {
   label: string;
 }
 
-interface RememberedExternalTarget extends ExternalTarget {
-  api_key_required: boolean;
-}
-
 interface ExternalState {
   connected: ExternalTarget | null;
-  remembered: RememberedExternalTarget | null;
+  remembered: ExternalTarget | null;
 }
 
 interface ExternalConnectResult {
@@ -384,15 +378,11 @@ export interface ConversationMeta {
   model_path: string | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: any;
-  created_at: number;
 }
 
 interface StoredMessage {
-  id: number;
-  conv_id: number;
   role: string;
   content: string;
-  created_at: number;
 }
 
 export const listConversations = () => invoke<ConversationMeta[]>("list_conversations");
@@ -432,7 +422,6 @@ export const benchStatus = () => invoke<BenchStatus | null>("bench_status");
 export const getBenchLogs = () => invoke<string[]>("get_bench_logs");
 
 interface WikitextResult {
-  ready: boolean;
   downloaded: boolean;
   path: string;
 }

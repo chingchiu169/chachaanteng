@@ -181,7 +181,6 @@ const WIKITEXT2_TEST_FILE: &str = "wiki.test.raw";
 
 #[derive(Serialize, Clone)]
 pub struct WikitextResult {
-    pub ready: bool,
     /// True when this call performed the download (false if it already existed).
     pub downloaded: bool,
     pub path: String,
@@ -205,7 +204,7 @@ pub async fn ensure_wikitext2(
     let dataset_dir = models_dir.join(WIKITEXT2_DIR);
     let target = dataset_dir.join(WIKITEXT2_TEST_FILE);
     if target.is_file() {
-        return Ok(WikitextResult { ready: true, downloaded: false, path: target.to_string_lossy().into_owned() });
+        return Ok(WikitextResult { downloaded: false, path: target.to_string_lossy().into_owned() });
     }
 
     tokio::fs::create_dir_all(&dataset_dir).await.map_err(|e| e.to_string())?;
@@ -300,7 +299,7 @@ pub async fn ensure_wikitext2(
     match result {
         Ok(()) => {
             tokio::fs::rename(&part, &target).await.map_err(|e| e.to_string())?;
-            Ok(WikitextResult { ready: true, downloaded: true, path: target.to_string_lossy().into_owned() })
+            Ok(WikitextResult { downloaded: true, path: target.to_string_lossy().into_owned() })
         }
         Err(e) => {
             let _ = tokio::fs::remove_file(&part).await;

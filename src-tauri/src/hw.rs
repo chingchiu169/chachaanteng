@@ -14,13 +14,14 @@ pub struct GpuInfo {
 
 #[derive(Serialize, Clone)]
 pub struct HardwareInfo {
-    pub arch: String,
     pub cpu_name: String,
     pub ram_gb: u64,
     pub nvidia_gpus: Vec<GpuInfo>,
     /// Non-NVIDIA GPUs (AMD / Intel Arc etc.) — Vulkan candidates
     pub other_gpus: Vec<String>,
-    /// True if a non-Microsoft discrete GPU exists besides NVIDIA ones
+    /// True if a non-Microsoft discrete GPU exists besides NVIDIA ones. Rust-side only
+    /// (recommend_for) — never sent to the frontend.
+    #[serde(skip)]
     pub has_other_discrete: bool,
 }
 
@@ -157,7 +158,6 @@ pub async fn detect() -> HardwareInfo {
     let nvidia_names: Vec<String> = nvidia_gpus.iter().map(|g| g.name.to_lowercase()).collect();
     let (other_gpus, has_other_discrete, cpu_name, ram_gb) = detect_system(&nvidia_names).await;
     HardwareInfo {
-        arch: std::env::consts::ARCH.to_string(),
         cpu_name,
         ram_gb,
         nvidia_gpus,

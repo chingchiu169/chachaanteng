@@ -167,7 +167,6 @@ pub struct Conversation {
     pub model_path: Option<String>,
     /// JSON blob of chat params (temperature/top_p/max_tokens/…) at save time.
     pub params: Option<serde_json::Value>,
-    pub created_at: i64,
 }
 
 /// One persisted chat message — only the fields the UI reads (role + content).
@@ -182,7 +181,7 @@ pub async fn list_conversations(state: State<'_, crate::AppState>) -> Result<Vec
     let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
     let mut stmt = db
         .conn
-        .prepare("SELECT id, title, model_path, params, created_at FROM conversations ORDER BY id DESC")
+        .prepare("SELECT id, title, model_path, params FROM conversations ORDER BY id DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -193,7 +192,6 @@ pub async fn list_conversations(state: State<'_, crate::AppState>) -> Result<Vec
                 params: r
                     .get::<_, Option<String>>(3)?
                     .and_then(|p| serde_json::from_str(&p).ok()),
-                created_at: r.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?;

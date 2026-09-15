@@ -1,14 +1,11 @@
-//! Preset storage (FR3): JSON files in app_data/presets with creation-time and
-//! archive metadata sidecar files. Ported from the reference presets.py semantics.
+//! Preset storage (FR3): JSON files in app_data/presets with an archive-metadata
+//! sidecar file. Ported from the reference presets.py semantics.
 
-use crate::util::now_ms;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-const CREATED_TIMES_FILE: &str = ".preset-created-times.json";
 const ARCHIVED_FILE: &str = ".preset-archived.json";
 /// Keys that must never be persisted inside a preset (credentials).
 const SENSITIVE_KEYS: [&str; 2] = ["api_key", "hf_token"];
@@ -19,8 +16,6 @@ const SENSITIVE_CLI_FLAGS: [&str; 3] = ["--api-key", "-hft", "--hf-token"];
 pub struct PresetInfo {
     pub name: String,
     pub data: serde_json::Value,
-    pub created_ms: i64,
-    pub modified_ms: i64,
     pub archived: bool,
 }
 
@@ -55,19 +50,6 @@ fn write_json_atomic(path: &std::path::Path, value: &serde_json::Value) -> Resul
         .map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
-}
-
-fn load_created_times(dir: &std::path::Path) -> HashMap<String, i64> {
-    let path = dir.join(CREATED_TIMES_FILE);
-    match fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-        Err(_) => HashMap::new(),
-    }
-}
-
-fn save_created_times(dir: &std::path::Path, times: &HashMap<String, i64>) {
-    let value = serde_json::to_value(times).unwrap_or(serde_json::Value::Null);
-    let _ = write_json_atomic(&dir.join(CREATED_TIMES_FILE), &value);
 }
 
 fn load_archived(dir: &std::path::Path) -> Vec<String> {
@@ -134,16 +116,11 @@ fn preset_path(dir: &std::path::Path, safe_name: &str) -> Option<PathBuf> {
     Some(dir.join(format!("{safe_name}.json")))
 }
 
-fn file_modified_ms(path: &std::path::Path) -> i64 {
-    fs::metadata(path).map(|m| crate::util::file_mtime_ms(&m)).unwrap_or(0)
-}
-
 #[tauri::command]
 pub async fn list_presets(app: AppHandle) -> Result<Vec<PresetInfo>, String> {
     // Reads every preset file (and may rewrite corrupt ones) — keep it off the async runtime.
     tokio::task::spawn_blocking(move || {
         let dir = presets_dir(&app)?;
-        let created_times = load_created_times(&dir);
         let archived = load_archived(&dir);
         let mut out = Vec::new();
 
@@ -153,7 +130,8 @@ pub async fn list_presets(app: AppHandle) -> Result<Vec<PresetInfo>, String> {
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            // Skip internal sidecar metadata (.preset-created-times.json, .preset-archived.json).
+            // Skip dotfiles — the archive sidecar plus any stale .preset-created-times.json
+            // left behind by older versions.
             if path.file_name().and_then(|s| s.to_str()).is_some_and(|n| n.starts_with('.')) {
                 continue;
             }
@@ -175,8 +153,6 @@ pub async fn list_presets(app: AppHandle) -> Result<Vec<PresetInfo>, String> {
             }
             let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             out.push(PresetInfo {
-                created_ms: created_times.get(&format!("{name}.json")).copied().unwrap_or_else(|| file_modified_ms(&path)),
-                modified_ms: file_modified_ms(&path),
                 archived: archived.iter().any(|n| n == &format!("{name}.json")),
                 name,
                 data,
@@ -225,13 +201,6 @@ pub async fn save_preset(
 
     let (sanitized, _) = sanitize_preset_data(&data);
     write_json_atomic(&path, &sanitized)?;
-
-    let mut times = load_created_times(&dir);
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-    if !times.contains_key(&file_name) {
-        times.insert(file_name, now_ms());
-        save_created_times(&dir, &times);
-    }
     Ok(safe_name)
 }
 
@@ -256,12 +225,7 @@ pub async fn rename_preset(app: AppHandle, name: String, new_name: String) -> Re
     }
     fs::rename(&from, &to).map_err(|e| e.to_string())?;
 
-    // carry creation time + archive flag across the rename
-    let mut times = load_created_times(&dir);
-    if let Some(created) = times.remove(&format!("{safe}.json")) {
-        times.insert(format!("{safe_new}.json"), created);
-        save_created_times(&dir, &times);
-    }
+    // carry archive flag across the rename
     let mut archived = load_archived(&dir);
     if let Some(pos) = archived.iter().position(|n| n == &format!("{safe}.json")) {
         archived[pos] = format!("{safe_new}.json");
@@ -283,10 +247,6 @@ pub async fn delete_preset(app: AppHandle, name: String) -> Result<(), String> {
     }
     fs::remove_file(&path).map_err(|e| e.to_string())?;
 
-    let mut times = load_created_times(&dir);
-    if times.remove(&format!("{safe}.json")).is_some() {
-        save_created_times(&dir, &times);
-    }
     let mut archived = load_archived(&dir);
     if let Some(pos) = archived.iter().position(|n| n == &format!("{safe}.json")) {
         archived.remove(pos);

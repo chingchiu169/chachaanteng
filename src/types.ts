@@ -33,7 +33,6 @@ export interface EngineInfo {
 
 export interface ServerInfo {
   port: number;
-  pid: number;
   model_path: string;
   /** true when re-adopted from a process that outlived the previous app session (no live output) */
   reconnected: boolean;
@@ -43,13 +42,8 @@ export interface ServerInfo {
 export interface HfModelInfo {
   id: string; // "owner/repo"
   author: string; // publisher
-  pipeline_tag?: string | null;
-  downloads: number;
-  likes: number;
   /** GGUF architecture string (e.g. "nemotron_h") — absent when the repo has no parsed GGUF metadata. */
   gguf_architecture?: string | null;
-  /** Total parameter count from the parsed GGUF header, if present. */
-  gguf_total_params?: number | null;
 }
 
 export interface Settings {
