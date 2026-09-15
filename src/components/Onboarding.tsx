@@ -33,7 +33,7 @@ function backendBadge(backend: string) {
   return <span className="badge badge-sm badge-soft">CPU</span>;
 }
 
-interface Progress {
+interface BuildProgress {
   backend: string;
   phase: "downloading" | "verifying" | "extracting";
   received: number;
@@ -99,7 +99,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<Step>("engine");
   const [data, setData] = useState<OnboardingData | null>(null);
   const [error, setError] = useState("");
-  const [progress, setProgress] = useState<Progress | null>(null);
+  const [progress, setProgress] = useState<BuildProgress | null>(null);
   const [customPath, setCustomPath] = useState("");
   const [customBusy, setCustomBusy] = useState(false);
 
@@ -116,7 +116,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
       (e) => {
         setProgress((p) => ({
           backend: p?.backend ?? "",
-          phase: (e.payload.phase as Progress["phase"]) ?? "downloading",
+          phase: (e.payload.phase as BuildProgress["phase"]) ?? "downloading",
           received: e.payload.received,
           total: e.payload.total ?? p?.total ?? null,
           file: e.payload.file ?? p?.file ?? "",

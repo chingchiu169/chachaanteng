@@ -237,7 +237,7 @@ body {
 }
 
 /* daisyUI v5 caps .chat-bubble at max-width:90% of its grid item. Our bubbles sit inside a
-   shrink-to-fit wrapper (col-start-2 max-w-[78%]) rather than directly in the grid, so the cap
+   shrink-to-fit wrapper (col-start-2 max-w-[60%]) rather than directly in the grid, so the cap
    resolves against the already-hugging wrapper and short messages wrap early ("Sure! What would
    you like me to / do?"). The wrapper's own max-w bounds row width, so drop daisyUI's cap. */
 .chat .chat-bubble {

@@ -143,7 +143,7 @@ export default function App() {
         </aside>
         {/* All views stay mounted — tab switching only hides them, so view-local state (drafts,
             scroll position, in-flight UI) survives page switches like real desktop tabs. Each
-            view gates its polling and window listeners on `active` so hidden pages do no work. */}
+            view gates its polling and window listeners on `visible` so hidden pages do no work. */}
         <main className="flex-1 overflow-hidden bg-base">
           <div className={tab === "chat" ? "h-full" : "hidden"}>
             <ChatView visible={tab === "chat"} />

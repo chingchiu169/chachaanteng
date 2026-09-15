@@ -29,7 +29,7 @@ import { useT } from "../i18n";
 
 import { fetchAndSaveModelMeta } from "../lib/model-meta";
 import { isMac } from "../lib/platform";
-import { inputCls, secondaryBtn, selectCls } from "../lib/ui";
+import { ghostBtnMuted, inputCls, secondaryBtn, selectCls } from "../lib/ui";
 
 const btnCls = "btn btn-primary btn-xs disabled:opacity-40";
 /** HF download panel — model + mmproj pickers share one width. */
@@ -717,7 +717,7 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
                             <button
                               onClick={() => removeImportedConfigOnly(p)}
                               title={t("models.removeListOnlyTitle")}
-                              className="btn btn-xs btn-ghost border border-line bg-raised hover:bg-hover text-fg-muted"
+                              className={ghostBtnMuted}
                             >
                               <i className="fa-solid fa-xmark mr-1" aria-hidden />
                               {t("models.removeFromList")}
