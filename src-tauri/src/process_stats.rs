@@ -229,8 +229,6 @@ fn process_cpu_percent(pid: u32, num_procs: usize) -> Option<f64> {
 // Per-process NVIDIA stats (bounded nvidia-smi probes — same pattern as system_stats::probe_nvidia)
 // ---------------------------------------------------------------------------
 
-const MIB: u64 = 1024 * 1024;
-
 /// pmon table: header lines start with '#'; data rows are whitespace-separated
 /// `gpu pid type sm [mem enc dec fps]` — the SM column is always index 3.
 fn parse_pmon_sm(out: &str, pid: u32) -> Option<f64> {
@@ -283,7 +281,7 @@ async fn probe_process_gpu(pid: u32) -> (Option<f64>, Option<u64>) {
                 if parts.len() < 2 || parts[0].parse::<u32>().ok()? != pid {
                     return None;
                 }
-                Some((parts[1].parse::<f64>().ok()? * MIB as f64) as u64)
+                Some((parts[1].parse::<f64>().ok()? * crate::util::MIB as f64) as u64)
             }),
         _ => None,
     };
@@ -322,11 +320,22 @@ pub async fn server_process_stats(state: State<'_, crate::AppState>, port: u16) 
     // GPU probes are the slow part (~1 s for pmon's sample window); run them first.
     let (gpu_util, gpu_mem) = probe_process_gpu(pid).await;
 
-    // CPU% + working set are fast FFI reads — no need to leave the runtime thread.
+    // CPU% + working set are fast FFI reads on Windows — inline there. On macOS they're bounded
+    // `ps` subprocesses, so leave the runtime thread.
     let procs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    #[cfg(windows)]
+    let (cpu_percent, ram_bytes) =
+        (process_cpu_percent(pid, procs), process_working_set_bytes(pid).unwrap_or(0));
+    #[cfg(not(windows))]
+    let (cpu_percent, ram_bytes) = tokio::task::spawn_blocking(move || {
+        (process_cpu_percent(pid, procs), process_working_set_bytes(pid).unwrap_or(0))
+    })
+    .await
+    .expect("blocking pool");
+
     Ok(ProcessStats {
-        cpu_percent: process_cpu_percent(pid, procs),
-        ram_bytes: process_working_set_bytes(pid).unwrap_or(0),
+        cpu_percent,
+        ram_bytes,
         gpu_util_percent: gpu_util,
         gpu_mem_bytes: gpu_mem,
     })

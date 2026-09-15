@@ -3,12 +3,12 @@
 //! Design (mirrors the reference `system_stats.py`):
 //! * Read-only. Never installs, elevates, or runs a package manager. The only
 //!   external call is a bounded `nvidia-smi` query against the driver's own tool.
-//! * CPU% and disk usage come from cumulative Windows counters; CPU busy % is a
-//!   delta between two samples (the first sample has no baseline → `null`).
+//! * CPU% and disk usage come from cumulative OS counters (Windows FFI; Mach + IOKit on
+//!   macOS); CPU busy % is a delta between two samples (the first sample has no baseline → `null`).
 //! * A short-lived (~2s) response cache means a cold GPU probe is paid at most
 //!   once per Monitor poll cycle. `refresh=true` bypasses the cache (Recheck).
 
-use crate::util::now_ms;
+use crate::util::{now_ms, MIB};
 use serde::Serialize;
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
@@ -498,8 +498,6 @@ fn parse_f(s: &str) -> Option<f64> {
     t.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
-const MIB: u64 = 1024 * 1024;
-
 /// One bounded `nvidia-smi` CSV query. Missing tool / no GPU → empty vec, never an error.
 async fn probe_nvidia() -> Vec<GpuStats> {
     let exe = resolve_nvidia_smi();
@@ -543,6 +541,7 @@ async fn probe_nvidia() -> Vec<GpuStats> {
 }
 
 /// `nvidia-smi` ships with the driver; look on PATH plus known locations.
+#[cfg(windows)]
 pub(crate) fn resolve_nvidia_smi() -> Option<String> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
@@ -560,6 +559,12 @@ pub(crate) fn resolve_nvidia_smi() -> Option<String> {
             return Some(cand);
         }
     }
+    None
+}
+
+/// No NVIDIA GPUs exist on macOS — skip the (Windows-only) PATH scan every poll.
+#[cfg(not(windows))]
+pub(crate) fn resolve_nvidia_smi() -> Option<String> {
     None
 }
 
@@ -635,9 +640,13 @@ pub async fn get_system_stats(
         }
     }
 
-    // Fast counter reads (FFI) — cheap, done inline.
+    // Fast counter reads — inline on Windows (FFI). On macOS the RAM probe is a bounded
+    // `vm_stat` subprocess, so it leaves the runtime thread there.
     let cpu_now = cpu_counters();
+    #[cfg(windows)]
     let ram = memory();
+    #[cfg(not(windows))]
+    let ram = tokio::task::spawn_blocking(memory).await.expect("blocking pool");
     let disk_path = app
         .path()
         .app_data_dir()
@@ -677,7 +686,8 @@ pub async fn get_system_stats(
     #[cfg(not(windows))]
     let (disk_read_bps, disk_write_bps): (Option<f64>, Option<f64>) = {
         let now = Instant::now();
-        match disk_counters() {
+        // `ioreg` is a ~25 ms subprocess — keep it off the runtime thread.
+        match tokio::task::spawn_blocking(disk_counters).await.expect("blocking pool") {
             Some(curr) => {
                 let mut cache = state.sys_stats.lock().await;
                 let rates = match cache.prev_disk {

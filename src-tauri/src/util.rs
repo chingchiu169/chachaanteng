@@ -1,5 +1,8 @@
 //! Small shared helpers used across several modules.
 
+/// One mebibyte in bytes (nvidia-smi reports GPU memory in MiB).
+pub const MIB: u64 = 1024 * 1024;
+
 /// Windows GUI apps have no console of their own, so without CREATE_NO_WINDOW every spawned
 /// console child (llama-server, nvidia-smi, taskkill…) gets its own visible window in release
 /// builds — dev mode hides it because children inherit the dev terminal's console.
