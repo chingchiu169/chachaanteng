@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.ico", "icons/icon.png", "icons/icon.icns"]
   },
   "plugins": {

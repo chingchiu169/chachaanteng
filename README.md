@@ -118,7 +118,7 @@ https://github.com/chingchiu169/chachaanteng/releases/latest/download/latest.jso
 **Per release:**
 
 1. Bump the version in **both** `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` (a mismatch fails `tauri build`). Keep tags as `vX.Y.Z` — the git-based flow for source installs relies on them.
-2. Build with the signing key exported:
+2. Build with the signing key exported (`bundle.createUpdaterArtifacts` must be `true` — it is in the committed config; without it no `.sig`/tarball artifacts are produced and the updater has nothing to verify):
 
    ```sh
    export TAURI_SIGNING_PRIVATE_KEY_PATH="$HOME/.tauri/chachaanteng-updater.key"
