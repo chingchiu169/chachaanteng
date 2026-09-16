@@ -59,6 +59,8 @@ export const en = {
   "chat.confirmEmptyTrash": "Permanently delete {n} trashed conversation(s)? This cannot be undone.",
   "chat.deletedNotice": "'{title}' moved to Trash — deleted automatically after 30 days.",
   "chat.undo": "Undo",
+  "chat.searchPh": "Search conversations…",
+  "chat.searchNoResults": "No matching conversations",
   "chat.external": "External",
   "chat.disconnectExt": "Disconnect external server",
   "chat.server": "Server",

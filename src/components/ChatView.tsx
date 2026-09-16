@@ -21,12 +21,13 @@ import {
   renameConversation,
   restoreConversation,
   saveConversation,
+  searchConversations,
   serverHealth,
   stopChat,
   tokenizeCount,
   webSearch,
 } from "../lib/api";
-import type { AttachmentData, ConversationMeta, ExternalTarget, SearchResult, StreamToken, TrashedMeta } from "../lib/api";
+import type { AttachmentData, ConversationMeta, ConvSearchHit, ExternalTarget, SearchResult, StreamToken, TrashedMeta } from "../lib/api";
 import { Markdown, splitReasoningFromContent } from "../lib/markdown";
 import { modelDisplayName } from "../lib/model-aliases";
 import { loadSavedExt, persistSavedExt, upsertSavedExt, type SavedExt } from "../lib/saved-ext";
@@ -197,6 +198,9 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
   const [convs, setConvs] = useState<ConversationMeta[]>([]);
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  /** Sidebar search — hits maps conv id → snippet (null when only the title matched). */
+  const [searchQ, setSearchQ] = useState("");
+  const [hits, setHits] = useState<Record<number, string | null>>({});
   // rename (prompt modal) target — window.prompt/confirm are suppressed in the webview
   const [renameTarget, setRenameTarget] = useState<{ id: number; current: string } | null>(null);
   // Trash — deletes are soft (30-day auto-purge), so no confirm dialog on delete itself.
@@ -475,6 +479,29 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
     void refreshConvs();
     void refreshTrashed();
   }, [visible, refreshConvs, refreshTrashed]);
+
+  // Debounced sidebar search — the view stays mounted across tab switches, so a stale query
+  // simply re-filters on show. Empty query clears hits (unfiltered list).
+  useEffect(() => {
+    const q = searchQ.trim();
+    if (!q) {
+      setHits({});
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await searchConversations(q);
+        if (alive) setHits(Object.fromEntries(res.map((h: ConvSearchHit) => [h.id, h.snippet])));
+      } catch {
+        /* ignore */
+      }
+    }, 200);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [searchQ]);
 
   const loadConversation = async (id: number, meta?: ConversationMeta) => {
     // A stream outlives tab switches — never switch AWAY from the conversation being replied to,
@@ -982,6 +1009,10 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
   const willOverflow =
     capacity !== null && usedTokens !== null && usedTokens + REPLY_HEADROOM > capacity;
 
+  // Sidebar search filter — a conv is visible when it has a hit (snippet may be null for title-only matches).
+  const convSearching = searchQ.trim().length > 0;
+  const visibleConvs = convSearching ? convs.filter((c) => hits[c.id] !== undefined) : convs;
+
   // --- render -------------------------------------------------------------------------------
   return (
     <div className="h-full flex">
@@ -1040,11 +1071,19 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
             </>
           ) : (
             <>
+              <input
+                value={searchQ}
+                onChange={(e) => setSearchQ(e.target.value)}
+                placeholder={t("chat.searchPh")}
+                className={`${inputCls} m-2 mb-1 w-[calc(100%-1rem)]`}
+              />
               <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-                {convs.length === 0 && (
-                  <p className="text-[11px] text-fg-faint px-2 py-1">{t("chat.noConvs")}</p>
+                {visibleConvs.length === 0 && (
+                  <p className="text-[11px] text-fg-faint px-2 py-1">
+                    {convSearching ? t("chat.searchNoResults") : t("chat.noConvs")}
+                  </p>
                 )}
-                {convs.map((c) => (
+                {visibleConvs.map((c) => (
                   <div
                     key={c.id}
                     onClick={() => void loadConversation(c.id)}
@@ -1053,9 +1092,14 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
                       activeConvId === c.id ? "bg-accent-subtle text-fg-bright" : "text-fg-muted hover:bg-hover"
                     }`}
                   >
-                    <span className="flex-1 truncate" title={c.title}>
-                      {c.title || t("chat.untitled")}
-                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate" title={c.title}>
+                        {c.title || t("chat.untitled")}
+                      </div>
+                      {hits[c.id] && (
+                        <div className="text-[10px] text-fg-faint truncate">{hits[c.id]}</div>
+                      )}
+                    </div>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

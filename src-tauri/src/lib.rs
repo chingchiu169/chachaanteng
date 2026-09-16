@@ -134,6 +134,7 @@ pub fn run() {
             db::restore_conversation,
             db::purge_conversation,
             db::list_trashed_conversations,
+            db::search_conversations,
             websearch::web_search,
             websearch::open_url,
             presets::list_presets,

@@ -355,6 +355,75 @@ pub async fn purge_conversation(state: State<'_, crate::AppState>, id: i64) -> R
     Ok(())
 }
 
+/// One conversation matched by `search_conversations`.
+#[derive(Serialize, Clone)]
+pub struct ConvSearchHit {
+    pub id: i64,
+    /// Short window around the first matching message; None when only the title matched.
+    pub snippet: Option<String>,
+}
+
+/// Case-insensitive search across conversation titles AND message contents (LIKE-based —
+/// personal-scale data, no FTS5 dependency). One hit per matching conversation.
+#[tauri::command]
+pub async fn search_conversations(
+    state: State<'_, crate::AppState>,
+    query: String,
+) -> Result<Vec<ConvSearchHit>, String> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Escape LIKE wildcards so user-typed % / _ match literally.
+    let like = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let mut stmt = db
+        .conn
+        .prepare(
+            "SELECT id FROM conversations
+             WHERE deleted_at IS NULL
+               AND (lower(title) LIKE ?1 ESCAPE '\\'
+                    OR EXISTS (SELECT 1 FROM messages m
+                               WHERE m.conv_id = conversations.id AND lower(m.content) LIKE ?1 ESCAPE '\\'))
+             ORDER BY id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids: Vec<i64> = stmt
+        .query_map([like.as_str()], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let snippet = db
+            .conn
+            .query_row(
+                "SELECT content FROM messages WHERE conv_id = ?1 AND lower(content) LIKE ?2 ESCAPE '\\' ORDER BY id ASC LIMIT 1",
+                params![id, like],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|c| snippet_window(&c, &q));
+        out.push(ConvSearchHit { id, snippet });
+    }
+    Ok(out)
+}
+
+/// ~30 chars before + ~40 after the first case-insensitive match; newlines collapsed.
+fn snippet_window(content: &str, needle: &str) -> Option<String> {
+    let lower: Vec<char> = content.to_lowercase().chars().collect();
+    let needle_chars: Vec<char> = needle.chars().collect();
+    if needle_chars.is_empty() || lower.len() < needle_chars.len() {
+        return None;
+    }
+    // Char-space match — byte offsets would miscount multi-byte (CJK) characters.
+    let start = lower.windows(needle_chars.len()).position(|w| w == needle_chars.as_slice())?;
+    let end = (start + needle_chars.len() + 40).min(lower.len());
+    let s = start.saturating_sub(30);
+    Some(lower[s..end].iter().collect::<String>().replace('\n', " ").replace('\r', ""))
+}
+
 #[tauri::command]
 pub async fn list_trashed_conversations(
     state: State<'_, crate::AppState>,

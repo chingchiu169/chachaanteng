@@ -60,6 +60,8 @@ export const zhTw: Record<EnKey, string> = {
   "chat.confirmEmptyTrash": "確定永久刪除 {n} 個已刪對話？呢個操作無法復原。",
   "chat.deletedNotice": '「{title}」已移入垃圾桶 — 30 日後會自動刪除。',
   "chat.undo": "復原",
+  "chat.searchPh": "搜尋對話…",
+  "chat.searchNoResults": "搵唔到符合嘅對話",
   "chat.external": "外部",
   "chat.disconnectExt": "斷開外部 server",
   "chat.server": "伺服器",

@@ -415,6 +415,15 @@ export const purgeConversation = (id: number) => invoke<void>("purge_conversatio
 
 export const listTrashedConversations = () => invoke<TrashedMeta[]>("list_trashed_conversations");
 
+/** Case-insensitive match across conversation titles AND message contents. */
+export interface ConvSearchHit {
+  id: number;
+  /** Snippet around the first matching message; null when only the title matched. */
+  snippet: string | null;
+}
+
+export const searchConversations = (query: string) => invoke<ConvSearchHit[]>("search_conversations", { query });
+
 // --- benchmarks (FR5) --------------------------------------------------------
 
 export interface BenchStatus {
