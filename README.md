@@ -146,4 +146,4 @@ https://github.com/chingchiu169/chachaanteng/releases/latest/download/latest.jso
    }
    ```
 
-5. Create the release with all assets (installer, `.sig` files, `app.tar.gz`, `latest.json`). The portable build is intentionally not part of auto-update — it updates by manual download.
+5. Create the release with all assets (installer, `.sig` files, `app.tar.gz`, `latest.json`). The portable build is intentionally not part of auto-update — it updates by manual download. Tauri 2 has no native portable target: the portable asset is just the raw self-contained binary `src-tauri/target/release/chachaanteng.exe` renamed to `ChaChaanTengPortable-<ver>-x64.exe` (no zip; frontend assets are already embedded).

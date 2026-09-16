@@ -27,10 +27,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "dmg"],
-    "icon": ["icons/icon.ico", "icons/icon.png", "icons/icon.icns"],
-    "nsis": {
-      "portable": true
-    }
+    "icon": ["icons/icon.ico", "icons/icon.png", "icons/icon.icns"]
   },
   "plugins": {
     "updater": {
