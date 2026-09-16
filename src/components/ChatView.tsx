@@ -1172,7 +1172,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
               </div>
               <button
                 onClick={() => setShowTrash(true)}
-                className="m-2 mt-0 flex items-center gap-1.5 text-xs text-fg-muted hover:text-fg-bright w-[calc(100%-1rem)]"
+                className="mx-2 mb-2 flex items-center gap-1.5 text-xs text-fg-muted hover:text-fg-bright w-[calc(100%-1rem)]"
               >
                 <i className="fa-solid fa-trash-can" aria-hidden />
                 {t("chat.trashToggle")}
