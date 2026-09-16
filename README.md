@@ -112,7 +112,7 @@ https://github.com/chingchiu169/chachaanteng/releases/latest/download/latest.jso
 
 ```sh
 ./node_modules/.bin/tauri signer generate -w "$HOME/.tauri/chachaanteng-updater.key" --ci
-# paste the printed public key into src-tauri/tauri.conf.json → plugins.updater.pubKey
+# paste the printed public key into src-tauri/tauri.conf.json → plugins.updater.pubkey
 ```
 
 **Per release:**
