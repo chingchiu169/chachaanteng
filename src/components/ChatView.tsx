@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { Channel } from "@tauri-apps/api/core";
 import { message, open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -601,6 +602,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
       await deleteConversation(id);
       if (activeConvId === id) newChat();
       void refreshConvs();
+      void refreshTrashed(); // badge count + trash list stay current without a page switch
       setUndoDelete({ id, title });
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
       undoTimerRef.current = setTimeout(() => setUndoDelete(null), 6000);
@@ -618,6 +620,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
     try {
       await restoreConversation(u.id);
       void refreshConvs();
+      void refreshTrashed(); // the row disappears from an open trash view too
     } catch (e) {
       setNotice(String(e));
       setNoticeError(true);
@@ -1052,7 +1055,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
 
   // --- render -------------------------------------------------------------------------------
   return (
-    <div className="h-full flex">
+    <div className="relative h-full flex">
       {/* conversation sidebar */}
       {!focusMode && (
         <aside className="w-56 shrink-0 border-r border-line bg-surface flex flex-col">
@@ -1171,7 +1174,10 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
                 ))}
               </div>
               <button
-                onClick={() => setShowTrash(true)}
+                onClick={() => {
+                  setShowTrash(true);
+                  void refreshTrashed(); // always enter the trash view with a fresh list
+                }}
                 className="mx-2 mb-2 flex items-center gap-1.5 text-xs text-fg-muted hover:text-fg-bright w-[calc(100%-1rem)]"
               >
                 <i className="fa-solid fa-trash-can" aria-hidden />
@@ -1346,14 +1352,6 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
                 {notice}
               </div>
             )}
-            {undoDelete && (
-              <div role="alert" className="alert alert-info flex items-center justify-between gap-2">
-                <span>{t("chat.deletedNotice", { title: undoDelete.title || t("chat.untitled") })}</span>
-                <button onClick={() => void doUndoDelete()} className="btn btn-xs shrink-0">
-                  {t("chat.undo")}
-                </button>
-              </div>
-            )}
           </header>
         )}
 
@@ -1525,6 +1523,27 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
         onConfirm={() => void doEmptyTrash()}
         onCancel={() => setEmptyTrashConfirm(false)}
       />
+
+      {/* transient undo toast — top-right, auto-dismisses with the 6s timer (mirrors QuickLaunchView's toasts) */}
+      <div className="absolute top-3 right-4 z-50 flex flex-col items-end gap-2 pointer-events-none">
+        <AnimatePresence>
+          {undoDelete && (
+            <motion.div
+              key={undoDelete.id}
+              role="alert"
+              className="alert alert-info flex items-center gap-2 pointer-events-auto"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+            >
+              <span>{t("chat.deletedNotice", { title: undoDelete.title || t("chat.untitled") })}</span>
+              <button onClick={() => void doUndoDelete()} className="btn btn-xs shrink-0">
+                {t("chat.undo")}
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
