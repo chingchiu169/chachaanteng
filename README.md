@@ -121,7 +121,10 @@ https://github.com/chingchiu169/chachaanteng/releases/latest/download/latest.jso
 2. Build with the signing key exported (`bundle.createUpdaterArtifacts` must be `true` — it is in the committed config; without it no `.sig`/tarball artifacts are produced and the updater has nothing to verify):
 
    ```sh
+   # macOS/Linux:
    export TAURI_SIGNING_PRIVATE_KEY_PATH="$HOME/.tauri/chachaanteng-updater.key"
+   # Windows (Git Bash) — $HOME is a Unix-style path Rust can't resolve, use the drive form:
+   export TAURI_SIGNING_PRIVATE_KEY_PATH="C:/Users/<you>/.tauri/chachaanteng-updater.key"
    npm run tauri build
    ```
 
