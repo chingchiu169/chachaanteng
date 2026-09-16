@@ -118,10 +118,10 @@ function parseBlocks(text: string): Block[] {
       i++;
       continue;
     }
-    if (/^&gt;\s?/.test(line)) {
+    if (/^>\s?/.test(line)) {
       const quoteLines: string[] = [];
-      while (i < lines.length && /^&gt;\s?/.test(lines[i])) {
-        quoteLines.push(lines[i].replace(/^&gt;\s?/, ""));
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        quoteLines.push(lines[i].replace(/^>\s?/, ""));
         i++;
       }
       blocks.push({ kind: "quote", lines: quoteLines });
@@ -168,7 +168,7 @@ function parseBlocks(text: string): Block[] {
     while (
       i < lines.length &&
       !/^(#{1,6}\s|[\s]*[-*+]\s|[\s]*\d+\.\s|(-{3,}|\*{3,}|_{3,})\s*$)/.test(lines[i]) &&
-      !/^&gt;\s?/.test(lines[i]) &&
+      !/^>\s?/.test(lines[i]) &&
       !(lines[i].includes("|") && i + 1 < lines.length && /^\|?\s*:?-{3,}/.test(lines[i + 1])) &&
       !/^\u0000CODE_BLOCK_\d+\u0000$/.test(lines[i])
     ) {
@@ -184,13 +184,9 @@ function parseBlocks(text: string): Block[] {
 
 export function Markdown({ text }: { text: string }) {
   const { text: stripped, blocks } = extractCodeBlocks(String(text ?? ""));
-  // escape < > & the way the reference does before block parsing (">" becomes "&gt;"
-  // so blockquote detection matches the ported regexes)
-  const escaped = stripped
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  const parsed = parseBlocks(escaped);
+  // No manual escaping — React escapes at render time. (The ported reference escaped for
+  // innerHTML; doing it here made literal > < & show up as "&gt;" / "&lt;" / "&amp;".)
+  const parsed = parseBlocks(stripped);
 
   return (
     <div className="chat-markdown space-y-2 text-sm leading-relaxed">

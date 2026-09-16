@@ -10,6 +10,8 @@ type SparseFlags = Record<string, unknown>;
 // read-modify-write (setModelOverride rewrites the whole model_overrides row), so two
 // in-flight saves can complete out of order and let an older snapshot win on disk; the
 // regression would only surface at next app start. One shared chain covers both rows.
+// Every op RE-READS its row at write time (like saveSettingsMerged): after a terminally-failed
+// load() the in-memory base is empty, and persisting over it would wipe every stored override.
 let saveChain: Promise<unknown> = Promise.resolve();
 function enqueueSave(op: () => Promise<unknown>): void {
   saveChain = saveChain.then(op).catch(() => {});
@@ -58,45 +60,79 @@ function makeScopesStore() {
     },
 
     setGlobalValue: (id, value) => {
-      const next = { ...get().global };
-      if (value === undefined) delete next[id];
-      else next[id] = cloneFlagValue(value);
-      set({ global: next });
-      enqueueSave(() => saveFlagValues(next));
+      const mutate = (base: SparseFlags): SparseFlags => {
+        const next = { ...base };
+        if (value === undefined) delete next[id];
+        else next[id] = cloneFlagValue(value);
+        return next;
+      };
+      set({ global: mutate(get().global) });
+      enqueueSave(async () => {
+        const merged = mutate(await getFlagValues());
+        set({ global: merged });
+        await saveFlagValues(merged);
+      });
     },
 
     // Setting a per-model value equal to the global one (or undefined) removes the
     // entry so the map stays sparse — the effective result is identical either way.
     setOverride: (model, id, value) => {
-      const cur = get().overrides[model] ?? {};
-      const next = { ...cur };
-      if (value === undefined || JSON.stringify(value) === JSON.stringify(get().global[id])) delete next[id];
-      else next[id] = cloneFlagValue(value);
-      const overrides = { ...get().overrides };
-      if (Object.keys(next).length > 0) overrides[model] = next;
-      else delete overrides[model];
-      set({ overrides });
-      enqueueSave(() => setModelOverride(model, next));
+      const mutateModel = (base: SparseFlags): SparseFlags => {
+        const next = { ...base };
+        if (value === undefined || JSON.stringify(value) === JSON.stringify(get().global[id])) delete next[id];
+        else next[id] = cloneFlagValue(value);
+        return next;
+      };
+      const applyTo = (all: Record<string, SparseFlags>): Record<string, SparseFlags> => {
+        const mergedModel = mutateModel(all[model] ?? {});
+        const overrides = { ...all };
+        if (Object.keys(mergedModel).length > 0) overrides[model] = mergedModel;
+        else delete overrides[model];
+        return overrides;
+      };
+      set({ overrides: applyTo(get().overrides) });
+      enqueueSave(async () => {
+        const all = await getModelOverrides();
+        set({ overrides: applyTo(all) });
+        await setModelOverride(model, mutateModel(all[model] ?? {}));
+      });
     },
 
     resetGlobalFlags: (ids) => {
       const drop = new Set(ids);
-      const next: SparseFlags = {};
-      for (const [k, v] of Object.entries(get().global)) if (!drop.has(k)) next[k] = v;
-      set({ global: next });
-      enqueueSave(() => saveFlagValues(next));
+      const mutate = (base: SparseFlags): SparseFlags => {
+        const next: SparseFlags = {};
+        for (const [k, v] of Object.entries(base)) if (!drop.has(k)) next[k] = v;
+        return next;
+      };
+      set({ global: mutate(get().global) });
+      enqueueSave(async () => {
+        const merged = mutate(await getFlagValues());
+        set({ global: merged });
+        await saveFlagValues(merged);
+      });
     },
 
     clearModelFlags: (model, ids) => {
       const drop = new Set(ids);
-      const cur = get().overrides[model] ?? {};
-      const next: SparseFlags = {};
-      for (const [k, v] of Object.entries(cur)) if (!drop.has(k)) next[k] = v;
-      const overrides = { ...get().overrides };
-      if (Object.keys(next).length > 0) overrides[model] = next;
-      else delete overrides[model];
-      set({ overrides });
-      enqueueSave(() => setModelOverride(model, next));
+      const mutate = (base: SparseFlags): SparseFlags => {
+        const next: SparseFlags = {};
+        for (const [k, v] of Object.entries(base)) if (!drop.has(k)) next[k] = v;
+        return next;
+      };
+      const applyTo = (all: Record<string, SparseFlags>): Record<string, SparseFlags> => {
+        const mergedModel = mutate(all[model] ?? {});
+        const overrides = { ...all };
+        if (Object.keys(mergedModel).length > 0) overrides[model] = mergedModel;
+        else delete overrides[model];
+        return overrides;
+      };
+      set({ overrides: applyTo(get().overrides) });
+      enqueueSave(async () => {
+        const all = await getModelOverrides();
+        set({ overrides: applyTo(all) });
+        await setModelOverride(model, mutate(all[model] ?? {}));
+      });
     },
   }));
 }
