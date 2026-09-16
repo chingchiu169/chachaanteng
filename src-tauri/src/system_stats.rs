@@ -540,9 +540,10 @@ async fn probe_nvidia() -> Vec<GpuStats> {
         .collect()
 }
 
-/// `nvidia-smi` ships with the driver; look on PATH plus known locations.
+/// `nvidia-smi` ships with the driver; look on PATH plus known locations. The answer never
+/// changes during a run, so scan once and reuse (callers probe per PID / per poll).
 #[cfg(windows)]
-pub(crate) fn resolve_nvidia_smi() -> Option<String> {
+static NVIDIA_SMI: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let cand = dir.join("nvidia-smi.exe");
@@ -560,6 +561,11 @@ pub(crate) fn resolve_nvidia_smi() -> Option<String> {
         }
     }
     None
+});
+
+#[cfg(windows)]
+pub(crate) fn resolve_nvidia_smi() -> Option<String> {
+    NVIDIA_SMI.clone()
 }
 
 /// No NVIDIA GPUs exist on macOS — skip the (Windows-only) PATH scan every poll.
