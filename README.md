@@ -1,7 +1,7 @@
 # ChaChaanTeng
 
 <p align="center">
-  <img src="public/logo.png" width="96" alt="ChaChaanTeng logo" />
+  <img src="logo/icon-rounded.png" width="96" alt="ChaChaanTeng icon" />
 </p>
 
 A desktop GUI for [llama.cpp](https://github.com/ggml-org/llama.cpp) on Windows and macOS (Apple Silicon / Intel) — run, chat with, and benchmark local LLMs. Built with **Tauri 2 + Rust + React**.
