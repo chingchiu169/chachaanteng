@@ -435,11 +435,13 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
           // merged at write time so a concurrent settings save isn't clobbered
           void saveSettingsMerged((s) => {
             const model_aliases = { ...(s.model_aliases ?? {}) };
-            for (const p of gone) delete model_aliases[p];
+            const model_meta = { ...(s.model_meta ?? {}) };
+            for (const p of gone) { delete model_aliases[p]; delete model_meta[p]; }
             return {
               model_paths: s.model_paths.filter((p) => !gone.has(p)),
               default_model: gone.has(s.default_model ?? "") ? null : s.default_model,
               model_aliases,
+              model_meta,
             };
           }).catch(() => {});
         }
@@ -498,10 +500,13 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
         await saveSettingsMerged((s) => {
           const model_aliases = { ...(s.model_aliases ?? {}) };
           delete model_aliases[p];
+          const model_meta = { ...(s.model_meta ?? {}) };
+          delete model_meta[p];
           return {
             model_paths: s.model_paths.filter((x) => x !== p),
             default_model: s.default_model === p ? null : s.default_model,
             model_aliases,
+            model_meta,
           };
         }).catch(() => {});
       },
