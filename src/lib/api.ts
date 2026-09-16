@@ -399,7 +399,21 @@ export const appendMessage = (convId: number, role: string, content: string) =>
 export const renameConversation = (id: number, title: string) =>
   invoke<void>("rename_conversation", { id, title });
 
+/** Soft delete — moves the conversation to trash (30-day auto-purge on app start). */
 export const deleteConversation = (id: number) => invoke<void>("delete_conversation", { id });
+
+export interface TrashedMeta {
+  id: number;
+  title: string;
+  deleted_at: number;
+}
+
+export const restoreConversation = (id: number) => invoke<void>("restore_conversation", { id });
+
+/** Hard delete — only reachable from the trash UI. */
+export const purgeConversation = (id: number) => invoke<void>("purge_conversation", { id });
+
+export const listTrashedConversations = () => invoke<TrashedMeta[]>("list_trashed_conversations");
 
 // --- benchmarks (FR5) --------------------------------------------------------
 

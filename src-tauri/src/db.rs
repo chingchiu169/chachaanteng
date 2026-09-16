@@ -24,7 +24,37 @@ impl Db {
              );
              CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conv_id);",
         )?;
+        // First schema migration — conversations.deleted_at (soft delete / trash). This is the
+        // app's migration pattern going forward: idempotent pragma_table_info check + ALTER TABLE,
+        // run on every open. No PRAGMA user_version yet (single column).
+        let has_deleted_at: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'deleted_at'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| e)?;
+        if has_deleted_at == 0 {
+            conn.execute("ALTER TABLE conversations ADD COLUMN deleted_at INTEGER", [])?;
+        }
         Ok(Self { conn })
+    }
+
+    /// Permanently remove conversations trashed more than `days` ago (messages first, one transaction).
+    pub fn purge_old_trash(&mut self, days: u64) -> Result<usize, rusqlite::Error> {
+        let cutoff = now_ms() - days as i64 * 86_400_000;
+        let tx = self.conn.transaction()?;
+        // Subquery keeps this to two statements — no statement borrow held across the DELETEs.
+        tx.execute(
+            "DELETE FROM messages WHERE conv_id IN (SELECT id FROM conversations WHERE deleted_at IS NOT NULL AND deleted_at < ?1)",
+            [cutoff],
+        )?;
+        let n = tx.execute(
+            "DELETE FROM conversations WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+            [cutoff],
+        )?;
+        tx.commit()?;
+        Ok(n)
     }
 
     /// Read a setting row. `Ok(None)` = key absent; `Err` = real DB failure (corruption/lock).
@@ -181,7 +211,9 @@ pub async fn list_conversations(state: State<'_, crate::AppState>) -> Result<Vec
     let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
     let mut stmt = db
         .conn
-        .prepare("SELECT id, title, model_path, params FROM conversations ORDER BY id DESC")
+        .prepare(
+            "SELECT id, title, model_path, params FROM conversations WHERE deleted_at IS NULL ORDER BY id DESC",
+        )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -276,8 +308,44 @@ pub async fn rename_conversation(
     Ok(())
 }
 
+/// Soft delete — moves the conversation to trash. Messages stay on disk until restore or the
+/// 30-day auto-purge at app start; `purge_conversation` is the hard path.
 #[tauri::command]
 pub async fn delete_conversation(state: State<'_, crate::AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    db.conn
+        .execute(
+            "UPDATE conversations SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+            params![now_ms(), id],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// A trashed conversation row — only the fields the trash UI shows.
+#[derive(Serialize, Clone)]
+pub struct TrashedConversation {
+    pub id: i64,
+    pub title: String,
+    /// ms epoch when it was moved to trash (auto-purged 30 days later at app start)
+    pub deleted_at: i64,
+}
+
+#[tauri::command]
+pub async fn restore_conversation(state: State<'_, crate::AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    db.conn
+        .execute(
+            "UPDATE conversations SET deleted_at = NULL WHERE id = ?1 AND deleted_at IS NOT NULL",
+            [id],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Hard delete — the old irreversible path, now only reachable from the trash UI.
+#[tauri::command]
+pub async fn purge_conversation(state: State<'_, crate::AppState>, id: i64) -> Result<(), String> {
     let mut db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
     // One transaction — a failure between the two DELETEs must not orphan messages/conversation.
     let tx = db.conn.transaction().map_err(|e| e.to_string())?;
@@ -285,4 +353,27 @@ pub async fn delete_conversation(state: State<'_, crate::AppState>, id: i64) -> 
     tx.execute("DELETE FROM conversations WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_trashed_conversations(
+    state: State<'_, crate::AppState>,
+) -> Result<Vec<TrashedConversation>, String> {
+    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let mut stmt = db
+        .conn
+        .prepare(
+            "SELECT id, title, deleted_at FROM conversations WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(TrashedConversation {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                deleted_at: r.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }

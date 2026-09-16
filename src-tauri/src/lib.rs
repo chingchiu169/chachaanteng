@@ -58,7 +58,9 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let db = db::Db::open(data_dir.join("chachaanteng.db")).map_err(|e| e.to_string())?;
+            let mut db = db::Db::open(data_dir.join("chachaanteng.db")).map_err(|e| e.to_string())?;
+            // Trash housekeeping — permanently delete conversations trashed >30 days ago.
+            let _ = db.purge_old_trash(30);
             // Housekeeping — prune server logs past the configured retention (0 = keep everything).
             if let Ok(Some(json)) = db.get_setting("settings") {
                 if let Ok(s) = serde_json::from_str::<db::Settings>(&json) {
@@ -129,6 +131,9 @@ pub fn run() {
             db::append_message,
             db::rename_conversation,
             db::delete_conversation,
+            db::restore_conversation,
+            db::purge_conversation,
+            db::list_trashed_conversations,
             websearch::web_search,
             websearch::open_url,
             presets::list_presets,

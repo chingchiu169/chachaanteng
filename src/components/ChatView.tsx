@@ -13,17 +13,20 @@ import {
   getMessages,
   listConversations,
   listServers,
+  listTrashedConversations,
   measurePromptTokens,
   openUrl,
+  purgeConversation,
   readAttachment,
   renameConversation,
+  restoreConversation,
   saveConversation,
   serverHealth,
   stopChat,
   tokenizeCount,
   webSearch,
 } from "../lib/api";
-import type { AttachmentData, ConversationMeta, ExternalTarget, SearchResult, StreamToken } from "../lib/api";
+import type { AttachmentData, ConversationMeta, ExternalTarget, SearchResult, StreamToken, TrashedMeta } from "../lib/api";
 import { Markdown, splitReasoningFromContent } from "../lib/markdown";
 import { modelDisplayName } from "../lib/model-aliases";
 import { loadSavedExt, persistSavedExt, upsertSavedExt, type SavedExt } from "../lib/saved-ext";
@@ -194,9 +197,16 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
   const [convs, setConvs] = useState<ConversationMeta[]>([]);
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
-  // rename (prompt modal) + delete (confirm modal) targets — window.prompt/confirm are suppressed in the webview
+  // rename (prompt modal) target — window.prompt/confirm are suppressed in the webview
   const [renameTarget, setRenameTarget] = useState<{ id: number; current: string } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
+  // Trash — deletes are soft (30-day auto-purge), so no confirm dialog on delete itself.
+  const [trashed, setTrashed] = useState<TrashedMeta[]>([]);
+  const [showTrash, setShowTrash] = useState(false);
+  const [purgeTarget, setPurgeTarget] = useState<number | null>(null); // permanent-delete confirm
+  const [emptyTrashConfirm, setEmptyTrashConfirm] = useState(false);
+  /** Last soft-deleted conversation — the header notice offers Undo for ~6s. */
+  const [undoDelete, setUndoDelete] = useState<{ id: number; title: string } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const convIdRef = useRef<number | null>(null);
   convIdRef.current = activeConvId;
 
@@ -450,12 +460,21 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
     }
   }, []);
 
+  const refreshTrashed = useCallback(async () => {
+    try {
+      setTrashed(await listTrashedConversations());
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // Re-list on every show — recovers a failed startup load (db not ready) and picks up
   // conversations created elsewhere. One extra cheap read when the tab is visible at mount.
   useEffect(() => {
     if (!visible) return;
     void refreshConvs();
-  }, [visible, refreshConvs]);
+    void refreshTrashed();
+  }, [visible, refreshConvs, refreshTrashed]);
 
   const loadConversation = async (id: number, meta?: ConversationMeta) => {
     // A stream outlives tab switches — never switch AWAY from the conversation being replied to,
@@ -537,12 +556,8 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
     void refreshConvs();
   };
 
-  const requestDeleteConv = (id: number) => setDeleteTarget(id);
-
-  const doDeleteConv = async () => {
-    const id = deleteTarget;
-    setDeleteTarget(null);
-    if (id == null) return;
+  /** Soft delete — straight to trash (no confirm); the header notice offers Undo for ~6s. */
+  const doDeleteConv = async (id: number) => {
     // Deleting the conversation that is mid-reply would strand activeConvId on a deleted row:
     // newChat() below early-returns on its streaming guard, and send()'s finally would append
     // the in-flight reply to the deleted id.
@@ -552,9 +567,67 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
       setNoticeError(true);
       return;
     }
-    await deleteConversation(id);
-    if (activeConvId === id) newChat();
-    void refreshConvs();
+    const title = convsRef.current.find((c) => c.id === id)?.title ?? "";
+    try {
+      await deleteConversation(id);
+      if (activeConvId === id) newChat();
+      void refreshConvs();
+      setUndoDelete({ id, title });
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = setTimeout(() => setUndoDelete(null), 6000);
+    } catch (e) {
+      setNotice(String(e));
+      setNoticeError(true);
+    }
+  };
+
+  const doUndoDelete = async () => {
+    const u = undoDelete;
+    if (!u) return;
+    setUndoDelete(null);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    try {
+      await restoreConversation(u.id);
+      void refreshConvs();
+    } catch (e) {
+      setNotice(String(e));
+      setNoticeError(true);
+    }
+  };
+
+  const doRestoreTrashed = async (id: number) => {
+    try {
+      await restoreConversation(id);
+      void refreshTrashed();
+      void refreshConvs();
+    } catch (e) {
+      setNotice(String(e));
+      setNoticeError(true);
+    }
+  };
+
+  const doPurge = async () => {
+    const id = purgeTarget;
+    setPurgeTarget(null);
+    if (id == null) return;
+    try {
+      await purgeConversation(id);
+      void refreshTrashed();
+    } catch (e) {
+      setNotice(String(e));
+      setNoticeError(true);
+    }
+  };
+
+  const doEmptyTrash = async () => {
+    setEmptyTrashConfirm(false);
+    try {
+      for (const x of trashed) await purgeConversation(x.id);
+      void refreshTrashed();
+    } catch (e) {
+      setNotice(String(e));
+      setNoticeError(true);
+    }
   };
 
   // --- context capacity helpers -----------------------------------------------------
@@ -919,45 +992,105 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
             <i className="fa-solid fa-plus" aria-hidden />
             {t("chat.newChat")}
           </button>
-          <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-            {convs.length === 0 && (
-              <p className="text-[11px] text-fg-faint px-2 py-1">{t("chat.noConvs")}</p>
-            )}
-            {convs.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => void loadConversation(c.id)}
-                onDoubleClick={() => requestRename(c.id, c.title)}
-                className={`group flex items-center gap-1 px-2 py-1.5 rounded-xs cursor-pointer text-xs ${
-                  activeConvId === c.id ? "bg-accent-subtle text-fg-bright" : "text-fg-muted hover:bg-hover"
-                }`}
-              >
-                <span className="flex-1 truncate" title={c.title}>
-                  {c.title || t("chat.untitled")}
-                </span>
+          {showTrash ? (
+            <>
+              <div className="flex items-center gap-1.5 px-3 py-1 border-b border-line text-xs font-medium text-fg-muted">
+                <i className="fa-solid fa-trash-can" aria-hidden />
+                {t("chat.trashTitle")}
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    requestRename(c.id, c.title);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-fg-bright"
-                  title={t("chat.renameTitle")}
+                  onClick={() => setShowTrash(false)}
+                  className="ml-auto text-fg-muted hover:text-fg-bright"
+                  title={t("chat.newChatListBack")}
                 >
-                  <i className="fa-solid fa-pen" aria-hidden />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    requestDeleteConv(c.id);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-red"
-                  title={t("chat.deleteTitle")}
-                >
-                  <i className="fa-solid fa-trash-can" aria-hidden />
+                  <i className="fa-solid fa-xmark" aria-hidden />
                 </button>
               </div>
-            ))}
-          </div>
+              <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
+                {trashed.length === 0 && (
+                  <p className="text-[11px] text-fg-faint px-2 py-1">{t("chat.trashEmpty")}</p>
+                )}
+                {trashed.map((c) => (
+                  <div key={c.id} className="group flex items-center gap-1 px-2 py-1.5 rounded-xs text-xs text-fg-muted">
+                    <span className="flex-1 truncate" title={c.title}>
+                      {c.title || t("chat.untitled")}
+                    </span>
+                    <button
+                      onClick={() => void doRestoreTrashed(c.id)}
+                      className="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-fg-bright"
+                      title={t("chat.restoreTitle")}
+                    >
+                      <i className="fa-solid fa-rotate-left" aria-hidden />
+                    </button>
+                    <button
+                      onClick={() => setPurgeTarget(c.id)}
+                      className="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-red"
+                      title={t("chat.purgeTitle")}
+                    >
+                      <i className="fa-solid fa-xmark" aria-hidden />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {trashed.length > 0 && (
+                <button onClick={() => setEmptyTrashConfirm(true)} className="m-2 btn btn-xs w-[calc(100%-1rem)]">
+                  <i className="fa-solid fa-trash-can" aria-hidden />
+                  {t("chat.emptyTrashBtn")}
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
+                {convs.length === 0 && (
+                  <p className="text-[11px] text-fg-faint px-2 py-1">{t("chat.noConvs")}</p>
+                )}
+                {convs.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => void loadConversation(c.id)}
+                    onDoubleClick={() => requestRename(c.id, c.title)}
+                    className={`group flex items-center gap-1 px-2 py-1.5 rounded-xs cursor-pointer text-xs ${
+                      activeConvId === c.id ? "bg-accent-subtle text-fg-bright" : "text-fg-muted hover:bg-hover"
+                    }`}
+                  >
+                    <span className="flex-1 truncate" title={c.title}>
+                      {c.title || t("chat.untitled")}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        requestRename(c.id, c.title);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-fg-bright"
+                      title={t("chat.renameTitle")}
+                    >
+                      <i className="fa-solid fa-pen" aria-hidden />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void doDeleteConv(c.id);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-red"
+                      title={t("chat.moveToTrash")}
+                    >
+                      <i className="fa-solid fa-trash-can" aria-hidden />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowTrash(true)}
+                className="m-2 mt-0 flex items-center gap-1.5 text-xs text-fg-muted hover:text-fg-bright w-[calc(100%-1rem)]"
+              >
+                <i className="fa-solid fa-trash-can" aria-hidden />
+                {t("chat.trashToggle")}
+                {trashed.length > 0 && (
+                  <span className="badge badge-xs badge-soft ml-auto">{trashed.length}</span>
+                )}
+              </button>
+            </>
+          )}
         </aside>
       )}
 
@@ -1122,6 +1255,14 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
                 {notice}
               </div>
             )}
+            {undoDelete && (
+              <div role="alert" className="alert alert-info flex items-center justify-between gap-2">
+                <span>{t("chat.deletedNotice", { title: undoDelete.title || t("chat.untitled") })}</span>
+                <button onClick={() => void doUndoDelete()} className="btn btn-xs shrink-0">
+                  {t("chat.undo")}
+                </button>
+              </div>
+            )}
           </header>
         )}
 
@@ -1274,14 +1415,24 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
         onCancel={() => setRenameTarget(null)}
       />
       <ConfirmDialog
-        open={deleteTarget !== null}
-        title={t("chat.deleteTitle")}
-        message={t("chat.confirmDelete")}
+        open={purgeTarget !== null}
+        title={t("chat.purgeTitle")}
+        message={t("chat.confirmPurge", { name: trashed.find((x) => x.id === purgeTarget)?.title ?? "" })}
         confirmLabel={t("common.delete")}
         cancelLabel={t("common.cancel")}
         danger
-        onConfirm={() => void doDeleteConv()}
-        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => void doPurge()}
+        onCancel={() => setPurgeTarget(null)}
+      />
+      <ConfirmDialog
+        open={emptyTrashConfirm}
+        title={t("chat.emptyTrashBtn")}
+        message={t("chat.confirmEmptyTrash", { n: trashed.length })}
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        danger
+        onConfirm={() => void doEmptyTrash()}
+        onCancel={() => setEmptyTrashConfirm(false)}
       />
     </div>
   );
