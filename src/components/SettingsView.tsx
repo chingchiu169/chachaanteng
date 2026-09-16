@@ -501,7 +501,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
             </div>
           )}
           {engErr && !installing && (
-            <div role="alert" className="alert alert-error">{engErr}</div>
+            <div role="alert" className="alert alert-soft alert-error">{engErr}</div>
           )}
         </section>
 
@@ -653,7 +653,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
             <div className="text-xs font-medium text-fg-bright">{t("settings.updTitle")}</div>
             <p className="text-[11px] text-fg-muted">{t("settings.updHelp")}</p>
             {updErr && (
-              <div role="alert" className="alert alert-error">
+              <div role="alert" className="alert alert-soft alert-error">
                 {updErr}
               </div>
             )}

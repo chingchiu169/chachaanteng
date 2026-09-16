@@ -671,7 +671,7 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
           </button>
         </div>
         {listingError && (
-          <div role="alert" className="alert alert-error mt-2">
+          <div role="alert" className="alert alert-soft alert-error mt-2">
             {listingError}
           </div>
         )}
@@ -849,7 +849,7 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
         )}
 
         {hfError && (
-          <div role="alert" className="alert alert-error mt-2">
+          <div role="alert" className="alert alert-soft alert-error mt-2">
             {hfError}
           </div>
         )}

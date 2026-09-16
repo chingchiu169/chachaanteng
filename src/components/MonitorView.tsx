@@ -222,7 +222,7 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
           </button>
         </div>
         {lastError && (
-          <div role="alert" className="alert alert-error">
+          <div role="alert" className="alert alert-soft alert-error">
             {lastError}
           </div>
         )}
@@ -366,7 +366,7 @@ export default function MonitorView({ visible = false }: { visible?: boolean }) 
                 {s.busy && s.metrics === null && <span className="text-[11px] text-fg-faint animate-pulse">{t("mon.fetching")}</span>}
               </div>
               {s.error && (
-                <div role="alert" className="alert alert-error">
+                <div role="alert" className="alert alert-soft alert-error">
                   {s.error}
                 </div>
               )}

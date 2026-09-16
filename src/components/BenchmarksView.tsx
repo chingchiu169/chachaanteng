@@ -509,14 +509,14 @@ export default function BenchmarksView({ visible = false }: { visible?: boolean 
           </span>
         ))}
         {result.error && (
-          <div role="alert" className="alert alert-error">
+          <div role="alert" className="alert alert-soft alert-error">
             {result.error}
           </div>
         )}
       </CommandPreview>
 
       {error && (
-        <div role="alert" className="alert alert-error">
+        <div role="alert" className="alert alert-soft alert-error">
           {error}
         </div>
       )}

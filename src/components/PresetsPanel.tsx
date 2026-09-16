@@ -221,7 +221,7 @@ export default function PresetsPanel({ onApply, currentPort }: Props) {
       </div>
 
       {error && (
-        <div role="alert" className="alert alert-error">
+        <div role="alert" className="alert alert-soft alert-error">
           {error}
         </div>
       )}

@@ -473,12 +473,12 @@ export default function ConfigureView({ visible = false }: { visible?: boolean }
               />
               <p className="text-[11px] text-yellow/80">{t("cfg.customArgsWarn")}</p>
               {argsResult.error && (
-                <div role="alert" className="alert alert-error">
+                <div role="alert" className="alert alert-soft alert-error">
                   {argsResult.error}
                 </div>
               )}
               {argsResult.warnings.map((w) => (
-                <div key={w} role="alert" className="alert alert-warning">
+                <div key={w} role="alert" className="alert alert-soft alert-warning">
                   {w}
                 </div>
               ))}

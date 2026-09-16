@@ -310,7 +310,7 @@ export default function ExtServersPanel({ visible = false }: { visible?: boolean
       )}
 
       {err && (
-        <div role="alert" className="alert alert-error">
+        <div role="alert" className="alert alert-soft alert-error">
           {err}
         </div>
       )}

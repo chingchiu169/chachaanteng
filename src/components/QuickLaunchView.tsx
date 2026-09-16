@@ -598,7 +598,7 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
             tall
           >
             {result.warnings.map((w) => (
-              <div key={w} role="alert" className="alert alert-warning">
+              <div key={w} role="alert" className="alert alert-soft alert-warning">
                 {w}
               </div>
             ))}
