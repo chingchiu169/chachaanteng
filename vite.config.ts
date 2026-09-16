@@ -14,5 +14,4 @@ export default defineConfig({
       ignored: ["**/src-tauri/target/**"],
     },
   },
-  envPrefix: ["VITE_", "TAURI_"],
 });
