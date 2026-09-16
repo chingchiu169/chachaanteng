@@ -213,7 +213,7 @@ pub struct EngineVersion {
 /// Recent llama.cpp releases that ship this platform's binaries (newest first) — for the Engine settings tab.
 #[tauri::command]
 pub async fn list_engine_versions() -> Result<Vec<EngineVersion>, String> {
-    let client = crate::util::http_client(std::time::Duration::from_secs(30))?;
+    let client = &crate::util::API_CLIENT;
     Ok(fetch_recent_releases(&client)
         .await?
         .into_iter()
@@ -272,7 +272,7 @@ fn builds_from_release(hw: &HardwareInfo, release: &GhRelease) -> Vec<BuildAsset
 #[tauri::command]
 pub async fn get_onboarding_data() -> Result<serde_json::Value, String> {
     let hw = detect().await; // async — each probe is timeout-capped inside
-    let client = crate::util::http_client(std::time::Duration::from_secs(30))?;
+    let client = &crate::util::API_CLIENT;
     let release = fetch_latest_usable_release(&client).await?;
     let builds = builds_from_release(&hw, &release);
     Ok(serde_json::json!({
@@ -534,7 +534,7 @@ pub async fn install_build(
         .find(|s| s.key == backend)
         .ok_or_else(|| format!("未知 backend: {backend}"))?;
 
-    let client = crate::util::http_client_streaming(std::time::Duration::from_secs(120))?;
+    let client = &crate::util::STREAM_CLIENT;
     let release = fetch_release(&client, &tag).await?;
     let asset_map: HashMap<String, GhAsset> =
         release.assets.into_iter().map(|a| (a.name.clone(), a)).collect();
@@ -572,11 +572,13 @@ pub async fn install_build(
     assert_engine_free(&state, &exe_lc).await?;
 
     let staged = root.join(format!("{dir_name}.new"));
-    // unique per install (pid + tag + backend) so concurrent installs don't share a temp dir
+    // unique per install (pid + tag + backend + time) so concurrent or back-to-back installs of the
+    // same build never share a temp dir — even while a previous cleanup is still running.
     let tmpdir = std::env::temp_dir().join(format!(
-        "chachaanteng-install-{}-{tag}-{}",
+        "chachaanteng-install-{}-{tag}-{}-{}",
         std::process::id(),
-        spec.key
+        spec.key,
+        crate::util::now_ms()
     ));
     std::fs::create_dir_all(&tmpdir).map_err(|e| e.to_string())?;
 

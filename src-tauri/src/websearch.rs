@@ -5,7 +5,6 @@
 use regex::Regex;
 use serde::Serialize;
 use std::sync::LazyLock;
-use std::time::Duration;
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                           (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -88,7 +87,7 @@ async fn searxng_search(query: &str, max: usize, base: &str) -> Result<SearchRes
     if !base.starts_with("http://") && !base.starts_with("https://") {
         return Ok(fail(query, "SearXNG endpoint not configured."));
     }
-    let client = crate::util::http_client(Duration::from_secs(15))?;
+    let client = &crate::util::API_CLIENT;
     let v: serde_json::Value = client
         .get(format!("{base}/search"))
         .query(&[("q", query), ("format", "json")])
@@ -134,7 +133,7 @@ async fn searxng_search(query: &str, max: usize, base: &str) -> Result<SearchRes
 // --- DuckDuckGo HTML -----------------------------------------------------------
 
 async fn ddg_search(query: &str, max: usize) -> Result<SearchResponse, String> {
-    let client = crate::util::http_client(Duration::from_secs(15))?;
+    let client = &crate::util::API_CLIENT;
     let html: String = client
         .get("https://html.duckduckgo.com/html/")
         .query(&[("q", query)])

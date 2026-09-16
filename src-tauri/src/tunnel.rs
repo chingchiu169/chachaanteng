@@ -116,7 +116,7 @@ async fn ensure_cloudflared(
     update(st, Some("downloading"), Some(&msg)).await;
 
     // Same client serves the metadata fetch and the streaming download — connect + read(stall) timeouts only.
-    let client = crate::util::http_client_streaming(std::time::Duration::from_secs(120))?;
+    let client = &crate::util::STREAM_CLIENT;
     // Release metadata carries each asset's digest as "sha256:<hex>" — verify against it.
     let rel: serde_json::Value = client
         .get(RELEASE_API)

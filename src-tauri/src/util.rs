@@ -77,17 +77,36 @@ pub fn declared_content_length(resp: &reqwest::Response) -> Option<u64> {
     resp.headers().get("content-length")?.to_str().ok()?.parse().ok()
 }
 
-/// Shared client for short API calls — a total timeout is right here (fail if the whole call drags).
-pub fn http_client(timeout: std::time::Duration) -> Result<reqwest::Client, String> {
+fn http_client(timeout: std::time::Duration) -> Result<reqwest::Client, String> {
     reqwest::Client::builder().timeout(timeout).build().map_err(|e| e.to_string())
 }
 
-/// Shared client for streaming downloads — connect + read(stall) timeouts only. A total
-/// `.timeout()` would cap the whole transfer and kill long downloads mid-stream.
-pub fn http_client_streaming(read_stall: std::time::Duration) -> Result<reqwest::Client, String> {
+/// Connect + read(stall) timeouts only. A total `.timeout()` would cap the whole transfer and
+/// kill long downloads mid-stream.
+fn http_client_streaming(read_stall: std::time::Duration) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(30))
         .read_timeout(read_stall)
         .build()
         .map_err(|e| e.to_string())
 }
+
+/// Shared clients for HTTP calls — one connection pool per timeout profile instead of a fresh
+/// `Client` (pool + background task) built on every call.
+///
+/// Short local-server calls (health probes, /slots): total timeout — fail if the whole call drags.
+pub static PROBE_CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(|| http_client(std::time::Duration::from_secs(5)).expect("build reqwest client"));
+
+/// External API calls (HF metadata, builds, web search): total timeout.
+pub static API_CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(|| http_client(std::time::Duration::from_secs(30)).expect("build reqwest client"));
+
+/// File downloads and the bench stream: connect + read(stall) only.
+pub static STREAM_CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(|| http_client_streaming(std::time::Duration::from_secs(120)).expect("build reqwest client"));
+
+/// Chat generation/prefill against local servers: like STREAM_CLIENT but a 5-minute stall bound —
+/// on CPU-only machines even a single token can take minutes.
+pub static CHAT_STREAM_CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(|| http_client_streaming(std::time::Duration::from_secs(300)).expect("build reqwest client"));

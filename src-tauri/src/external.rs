@@ -136,7 +136,6 @@ mod wincred {
 
 const MAX_API_KEY_LENGTH: usize = 1024;
 const MAX_LABEL_LENGTH: usize = 120;
-const PROBE_TIMEOUT_SECS: u64 = 5;
 const MAX_PROBE_BODY_BYTES: usize = 4096;
 /// Own settings row — deliberately separate from the frontend-owned `settings`
 /// blob so save_settings round-trips can never clobber it.
@@ -241,7 +240,7 @@ fn looks_like_llama_server(body: &[u8]) -> bool {
 /// listening — 401 (wrong key) and 503 (still loading a model) are reported back
 /// rather than treated as failures; only a transport-level error means nothing there.
 async fn probe(host: &str, port: u16, api_key: &str) -> Result<(u16, bool), String> {
-    let client = crate::util::http_client(std::time::Duration::from_secs(PROBE_TIMEOUT_SECS))?;
+    let client = &crate::util::PROBE_CLIENT;
     let url = format!("http://{host}:{port}/health");
     let mut req = client.get(&url);
     if !api_key.is_empty() {

@@ -211,7 +211,7 @@ pub async fn ensure_wikitext2(
 
     // Download the zip to a temp file (streaming, size-verified). connect + read(stall) only —
     // a total `.timeout()` would cap the whole fetch and fail on slow links.
-    let client = crate::util::http_client_streaming(std::time::Duration::from_secs(60))?;
+    let client = &crate::util::STREAM_CLIENT;
     let resp = client.get(WIKITEXT2_URL).send().await.map_err(|e| format!("WikiText-2 download failed: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {} downloading WikiText-2", resp.status()));

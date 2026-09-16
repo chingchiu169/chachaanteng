@@ -20,7 +20,9 @@ const ESTIMATE_VALUE_FLAGS: &[&str] = &[
     "--lora", "--lora-scaled", "--control-vector", "--control-vector-scaled",
     "--control-vector-layer-range", "-m", "--model", "-mu", "--model-url", "-dr", "--docker-repo",
     "-hf", "-hfr", "--hf-repo", "-hff", "--hf-file", "-hfv", "-hfrv", "--hf-repo-v", "-hffv",
-    "--hf-file-v", "-hft", "--hf-token", "--log-file", "--log-colors", "-lv", "--verbosity",
+    // -hft/--hf-token deliberately NOT kept: the fit tool only estimates memory (no network), and
+    // forwarding the user's HF token onto a subprocess command line would expose it in the process list.
+    "--hf-file-v", "--log-file", "--log-colors", "-lv", "--verbosity",
     "--log-verbosity", "--spec-draft-type-k", "-ctkd", "--cache-type-k-draft",
     "--spec-draft-type-v", "-ctvd", "--cache-type-v-draft",
 ];

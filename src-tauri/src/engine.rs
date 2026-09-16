@@ -349,10 +349,12 @@ async fn health_ok(client: &reqwest::Client, port: u16) -> bool {
 }
 
 /// Last `--port <n>` in a command line (spawn_server appends host/port at the end).
+static PORT_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"--port(?:=|\s+)(\d+)").unwrap());
+
 fn parse_port(cmdline: &str) -> Option<u16> {
-    let re = regex::Regex::new(r"--port(?:=|\s+)(\d+)").ok()?;
     let mut last = None;
-    for m in re.captures_iter(cmdline) {
+    for m in PORT_RE.captures_iter(cmdline) {
         if let Some(d) = m.get(1).and_then(|g| g.as_str().parse::<u16>().ok()) {
             last = Some(d);
         }
@@ -598,10 +600,7 @@ pub async fn adopt_orphan_servers(
     // still loading its model has no bound port yet — require consecutive failures (≈2 min)
     // before dropping it so a slow load isn't lost.
     tokio::spawn(async move {
-        let client = match crate::util::http_client(std::time::Duration::from_secs(3)) {
-            Ok(c) => c,
-            Err(_) => return, // no client, nothing to health-check
-        };
+        let client = &crate::util::PROBE_CLIENT;
         let mut fails: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
@@ -638,7 +637,7 @@ pub async fn adopt_orphan_servers(
 #[tauri::command]
 pub async fn server_health(port: u16, host: Option<String>) -> Result<bool, String> {
     let host = host.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| "127.0.0.1".into());
-    let client = crate::util::http_client(std::time::Duration::from_secs(2))?;
+    let client = &crate::util::PROBE_CLIENT;
     match client.get(format!("http://{host}:{port}/health")).send().await {
         Ok(r) if r.status().is_success() => Ok(true),
         _ => Ok(false),

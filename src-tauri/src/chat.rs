@@ -80,7 +80,7 @@ async fn stream_chat(
     token: &CancellationToken,
 ) -> Result<(), String> {
     // SSE stream — read(stall) timeout only, never a total one (a long generation is fine).
-    let client = crate::util::http_client_streaming(std::time::Duration::from_secs(300))?;
+    let client = &crate::util::CHAT_STREAM_CLIENT;
 
     let mut body = serde_json::json!({
         "model": "local",
@@ -175,7 +175,7 @@ pub async fn stop_chat(state: State<'_, AppState>) -> Result<(), String> {
 /// Live context capacity from the server's slots endpoint (min n_ctx across slots).
 #[tauri::command]
 pub async fn context_capacity(state: State<'_, AppState>, port: u16, host: String) -> Result<u32, String> {
-    let client = crate::util::http_client(std::time::Duration::from_secs(5))?;
+    let client = &crate::util::PROBE_CLIENT;
     let req = with_auth(client.get(format!("http://{host}:{port}/slots")), &state, &host, port).await;
     let v: serde_json::Value = req
         .send()
@@ -210,7 +210,7 @@ pub async fn measure_prompt_tokens(
     // This is a REAL prefill of the whole history — on CPU-only machines it can take minutes,
     // so a total timeout would fail slow-but-healthy servers. Connect fails fast (30 s); only
     // five full minutes of silence counts as a stall (same bound chat_stream uses).
-    let client = crate::util::http_client_streaming(std::time::Duration::from_secs(300))?;
+    let client = &crate::util::CHAT_STREAM_CLIENT;
     let body = serde_json::json!({
         "model": "local",
         "messages": messages,
@@ -236,7 +236,7 @@ pub async fn measure_prompt_tokens(
 /// undercounts by the per-message wrapper tokens; good enough for live estimates).
 #[tauri::command]
 pub async fn tokenize_count(state: State<'_, AppState>, port: u16, host: String, text: String) -> Result<u32, String> {
-    let client = crate::util::http_client(std::time::Duration::from_secs(10))?;
+    let client = &crate::util::API_CLIENT;
     let req = with_auth(client.post(format!("http://{host}:{port}/tokenize")).json(&serde_json::json!({ "content": text })), &state, &host, port).await;
     let v: serde_json::Value = req
         .send()
@@ -274,11 +274,14 @@ pub async fn read_attachment(path: String) -> Result<AttachmentData, String> {
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("attachment").to_string();
 
+    // Size-check via metadata BEFORE reading — an over-cap file is rejected without loading it.
+    let len = tokio::fs::metadata(p).await.map_err(|e| format!("讀唔到檔案: {e}"))?.len();
+
     if IMAGE_EXTS.contains(&ext.as_str()) {
-        let bytes = tokio::fs::read(p).await.map_err(|e| format!("讀唔到檔案: {e}"))?;
-        if (bytes.len() as u64) > MAX_IMAGE_BYTES {
+        if len > MAX_IMAGE_BYTES {
             return Err("圖片太大（上限 10MB）".into());
         }
+        let bytes = tokio::fs::read(p).await.map_err(|e| format!("讀唔到檔案: {e}"))?;
         let mime = match ext.as_str() {
             "png" => "image/png",
             "jpg" | "jpeg" => "image/jpeg",
@@ -290,10 +293,10 @@ pub async fn read_attachment(path: String) -> Result<AttachmentData, String> {
         return Ok(AttachmentData { name, kind: "image", data: format!("data:{mime};base64,{b64}") });
     }
 
-    let bytes = tokio::fs::read(p).await.map_err(|e| format!("讀唔到檔案: {e}"))?;
-    if (bytes.len() as u64) > MAX_TEXT_BYTES {
+    if len > MAX_TEXT_BYTES {
         return Err("文字檔太大（上限 1MB）".into());
     }
+    let bytes = tokio::fs::read(p).await.map_err(|e| format!("讀唔到檔案: {e}"))?;
     let text = String::from_utf8(bytes).map_err(|_| "二進制檔案，無法附加".to_string())?;
     Ok(AttachmentData { name, kind: "text", data: text })
 }

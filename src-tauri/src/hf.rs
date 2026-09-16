@@ -70,7 +70,8 @@ pub fn validate_hf_filename(filename: &str) -> Result<String, String> {
     let name = *parts.last().unwrap_or(&"");
     if name.is_empty() || UNSAFE_FILENAME_RE.is_match(name) {
         return Err("Hugging Face filename is not safe to save locally.".into());
-    }    if !name.to_lowercase().ends_with(".gguf") {
+    }
+    if !name.to_lowercase().ends_with(".gguf") {
         return Err("Only .gguf files can be downloaded.".into());
     }
     let device = name.split('.').next().unwrap_or("").to_uppercase();
@@ -198,7 +199,7 @@ pub async fn hf_list_repo_files(repo_id: String, revision: String) -> Result<HfR
     let repo = validate_hf_repo_id(&repo_id)?;
     let rev = validate_hf_revision(&revision)?;
 
-    let client = crate::util::http_client(std::time::Duration::from_secs(30))?;
+    let client = &crate::util::API_CLIENT;
     let (entries, rev) = fetch_tree_resolved(&client, &repo, &rev).await?;
 
     let mut files: Vec<HfFile> = Vec::new();
@@ -269,7 +270,7 @@ pub async fn hf_search_models(query: String, gguf_only: bool) -> Result<Vec<HfMo
         return Ok(Vec::new());
     }
 
-    let client = crate::util::http_client(std::time::Duration::from_secs(30))?;
+    let client = &crate::util::API_CLIENT;
 
     let mut params: Vec<(&str, String)> = vec![
         ("search".into(), q.into()),
@@ -335,7 +336,7 @@ pub struct HfModelInfo {
 #[tauri::command]
 pub async fn hf_model_info(repo_id: String) -> Result<HfModelInfo, String> {
     let repo = validate_hf_repo_id(&repo_id)?;
-    let client = crate::util::http_client(std::time::Duration::from_secs(30))?;
+    let client = &crate::util::API_CLIENT;
     let resp = client
         .get(format!("{HF_API}/models/{repo}"))
         .send()
@@ -597,7 +598,7 @@ pub async fn hf_start_download(
 
     // connect + read(stall) timeouts only — a client-level `.timeout()` caps the TOTAL request
     // time, which would kill any multi-GB download mid-stream.
-    let client = crate::util::http_client_streaming(std::time::Duration::from_secs(120))?;
+    let client = crate::util::STREAM_CLIENT.clone(); // cheap Arc clone — run_hf_download takes ownership
 
     // Claim the slot atomically (check + set under one lock) just before spawning — every
     // fallible step above has already run, so a claimed slot always leads to a spawn.
