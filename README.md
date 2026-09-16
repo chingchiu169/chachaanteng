@@ -72,3 +72,29 @@ src-tauri/src/        Rust core
   hw.rs               hardware detection (nvidia-smi / CIM)
   system_stats.rs     CPU/RAM/disk + GPU telemetry
 ```
+
+## Status & Roadmap
+
+### Shipped (v0.1)
+
+- [x] Engine install — CUDA / Vulkan / CPU / SYCL (Windows), Metal / CPU (macOS), SHA256 verified, multi-version coexistence
+- [x] Quick Launch tabs + full flag editor (~165 flags: categories, scopes, presets, modified-from-default indicators)
+- [x] Chat — streaming markdown, thinking effort + collapsed reasoning, context capacity bar, text/image attachments, web search (DDG / SearXNG), per-conversation server pick
+- [x] Models — HF search/download with progress + cancel, metadata enrichment, display aliases, mmproj pairing & cascade delete, sortable columns
+- [x] Benchmarks — llama-bench + perplexity runners with history
+- [x] Monitor — live tok/s (total + active-time averages), slot busy state, per-process CPU/RAM/GPU telemetry
+- [x] External servers address book (OS credential-store key encryption) + Cloudflare tunnel
+- [x] macOS support · dark/light theme · EN / 繁體中文
+
+### Up next
+
+- [ ] **Conversation search** — full-text across all conversations and messages (SQLite FTS), plus find-in-chat within a conversation
+- [ ] **Export conversation** — download any chat as Markdown or JSON
+- [ ] **Trash & undo** — soft-delete with restore instead of the irreversible confirm dialog
+- [ ] **Auto-update for installer users** — Tauri updater plugin (NSIS / DMG); today only the git-based flow covers source installs
+- [ ] **Model comparison chat** — send one prompt to several running servers, side-by-side replies with per-server tok/s
+- [ ] **Per-reply stats** — prompt tokens / generation time / t/s in each assistant bubble footer (data already available)
+- [ ] **Speculative decoding wizard** — one-click "speed up" that picks draft/ngram settings from the VRAM fit estimate
+- [ ] **Local RAG / document chat** — lightweight knowledge base over local files (needs an embedding pipeline)
+- [ ] **Agent / MCP surface** — tool-calling for the built-in web search + external servers
+- [ ] **Preset sharing** — export/import preset JSON, community presets later
