@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Channel } from "@tauri-apps/api/core";
-import { message, open } from "@tauri-apps/plugin-dialog";
+import { message, open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   appendMessage,
   chatStream,
@@ -26,8 +26,10 @@ import {
   stopChat,
   tokenizeCount,
   webSearch,
+  writeTextFile,
 } from "../lib/api";
 import type { AttachmentData, ConversationMeta, ConvSearchHit, ExternalTarget, SearchResult, StreamToken, TrashedMeta } from "../lib/api";
+import { convToJson, convToMarkdown } from "../lib/conv-export";
 import { Markdown, splitReasoningFromContent } from "../lib/markdown";
 import { modelDisplayName } from "../lib/model-aliases";
 import { loadSavedExt, persistSavedExt, upsertSavedExt, type SavedExt } from "../lib/saved-ext";
@@ -657,6 +659,41 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
     }
   };
 
+  /** Export the raw DB transcript (pre-compaction history included; an in-flight reply that is
+   *  not yet persisted is excluded). Format follows the chosen file extension. */
+  const exportConv = async (id: number) => {
+    const meta = convsRef.current.find((c) => c.id === id);
+    let stored;
+    try {
+      stored = await getMessages(id);
+    } catch (e) {
+      setNotice(t("chat.exportFailed", { err: String(e) }));
+      setNoticeError(true);
+      return;
+    }
+    const title = meta?.title || t("chat.untitled");
+    const safeName = title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60).trim() || "conversation";
+    const dest = await saveDialog({
+      defaultPath: `${safeName}.md`,
+      filters: [
+        { name: "Markdown", extensions: ["md"] },
+        { name: "JSON", extensions: ["json"] },
+      ],
+    });
+    if (!dest) return;
+    const content = dest.toLowerCase().endsWith(".json")
+      ? convToJson(meta ?? { title, model_path: null, params: null }, stored)
+      : convToMarkdown(title, meta?.model_path ?? null, stored);
+    try {
+      await writeTextFile(dest, content);
+      setNotice(t("chat.exportOk"));
+      setNoticeError(false);
+    } catch (e) {
+      setNotice(t("chat.exportFailed", { err: String(e) }));
+      setNoticeError(true);
+    }
+  };
+
   // --- context capacity helpers -----------------------------------------------------
   /** Exact usage: renders the chat template and costs one full prompt pass (max_tokens=1) on
    *  the server — only run it where the user is already waiting on the server (after a send). */
@@ -1109,6 +1146,16 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
                       title={t("chat.renameTitle")}
                     >
                       <i className="fa-solid fa-pen" aria-hidden />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void exportConv(c.id);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-fg-bright"
+                      title={t("chat.exportTitle")}
+                    >
+                      <i className="fa-solid fa-file-export" aria-hidden />
                     </button>
                     <button
                       onClick={(e) => {

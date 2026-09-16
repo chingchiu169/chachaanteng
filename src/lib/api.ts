@@ -380,7 +380,7 @@ export interface ConversationMeta {
   params: any;
 }
 
-interface StoredMessage {
+export interface StoredMessage {
   role: string;
   content: string;
 }
