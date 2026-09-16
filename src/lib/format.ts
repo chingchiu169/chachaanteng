@@ -5,7 +5,9 @@ export function fmtBytes(bytes?: number | null): string {
   if (bytes == null || bytes <= 0) return "—";
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${Math.round(bytes / 1024 ** 2)} MB`;
+  const mb = bytes / 1024 ** 2;
+  if (mb >= 1) return `${Math.round(mb)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`; // sub-MB — never "0 MB"
 }
 
 /** Grouped digits for cumulative counters — millions stay readable; "—" until first sample. */
@@ -27,5 +29,7 @@ export function fmtTokS(v?: number | null): string {
 export function fmtRate(bps: number): string {
   const mb = bps / 1024 ** 2;
   if (mb >= 1) return `${mb.toFixed(1)} MB/s`;
-  return `${Math.round(bps / 1024)} KB/s`;
+  const kb = bps / 1024;
+  if (kb >= 1) return `${Math.round(kb)} KB/s`;
+  return `${Math.max(1, Math.round(bps))} B/s`; // sub-KB — never "0 KB/s"
 }

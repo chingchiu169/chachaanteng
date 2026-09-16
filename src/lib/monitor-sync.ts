@@ -2,7 +2,7 @@ import { listServers, serverMetrics, serverProcessStats, serverProps, serverSlot
 import { modelDisplayName } from "./model-aliases";
 import { parsePrometheus } from "./prometheus";
 import { useApp } from "../store";
-import { useMonitor } from "../store-monitor";
+import { useMonitor, type Sample, type ServerPanel } from "../store-monitor";
 
 const POLL_MS = 2000; // matches the Rust-side cache TTL — every tick gets a fresh sample
 
@@ -85,7 +85,9 @@ export async function refreshServers() {
     });
     // Fetch all servers in parallel — one wedged server (5 s timeout per endpoint) must not
     // stall the panels behind it. The `refreshing` guard already keeps ticks from overlapping,
-    // and each closure touches only its own port's baseline + store entry.
+    // and each closure touches only its own port's baselines; results are collected here and
+    // applied as ONE store update below instead of N setServers calls (N re-renders per tick).
+    const patches = new Map<number, { fields: Partial<ServerPanel>; sample?: Sample }>();
     await Promise.all(
       list.map(async (entry) => {
         try {
@@ -149,18 +151,30 @@ export async function refreshServers() {
           if (promptN !== undefined || predN !== undefined) {
             st.prevCounters.set(entry.port, { promptN, predN, t: now });
           }
-          setServers((prev) =>
-            prev.map((p) =>
-              p.port === entry.port
-                ? { ...p, model: modelDisplayName(entry.model_path, aliases, entry.model_path.split(/[\\/]/).pop()), metrics, slots, props, error: null, busy: false, promptTotal: promptN ?? null, predTotal: predN ?? null, ...(promptAvgTokS !== undefined ? { promptAvgTokS, predAvgTokS } : {}), ...(proc ? { cpuPercent: proc.cpu_percent, ramBytes: proc.ram_bytes, gpuUtilPercent: proc.gpu_util_percent, gpuMemBytes: proc.gpu_mem_bytes } : {}), history: [...p.history.slice(-59), { t: now, promptTokS, genTokS }] }
-                : p,
-            ),
-          );
+          patches.set(entry.port, {
+            fields: {
+              model: modelDisplayName(entry.model_path, aliases, entry.model_path.split(/[\\/]/).pop()),
+              metrics, slots, props, error: null, busy: false,
+              promptTotal: promptN ?? null, predTotal: predN ?? null,
+              ...(promptAvgTokS !== undefined ? { promptAvgTokS, predAvgTokS } : {}),
+              ...(proc ? { cpuPercent: proc.cpu_percent, ramBytes: proc.ram_bytes, gpuUtilPercent: proc.gpu_util_percent, gpuMemBytes: proc.gpu_mem_bytes } : {}),
+            },
+            sample: { t: now, promptTokS, genTokS },
+          });
         } catch (e) {
-          setServers((prev) => prev.map((p) => (p.port === entry.port ? { ...p, error: String(e), busy: false } : p)));
+          patches.set(entry.port, { fields: { error: String(e), busy: false } });
         }
       }),
     );
+    if (patches.size > 0) {
+      setServers((prev) =>
+        prev.map((p) => {
+          const patch = patches.get(p.port);
+          if (!patch) return p;
+          return { ...p, ...patch.fields, ...(patch.sample ? { history: [...p.history.slice(-59), patch.sample] } : {}) };
+        }),
+      );
+    }
   } finally {
     st.refreshing = false;
   }

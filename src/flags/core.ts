@@ -447,24 +447,17 @@ export function buildLaunchArgs(
 ): LaunchArgsResult {
   const args: LaunchArg[] = [];
   const warnings: string[] = [];
-  const launchState: { tool?: Tool; model?: string; flags?: FlagValues; binaryTag?: string } =
-    state && typeof state === "object" && !Array.isArray(state) ? state : {};
-  const tool = launchState.tool;
-  const values: FlagValues =
-    launchState.flags && typeof launchState.flags === "object" && !Array.isArray(launchState.flags)
-      ? launchState.flags
-      : {};
-  const model = String(launchState.model || "");
+  const { tool, flags: values } = state;
+  const model = String(state.model || "");
 
   if (tool !== "llama-server" && tool !== "llama-cli") {
     return { args, error: "Unsupported llama.cpp tool.", warnings };
   }
   const toolBase = tool.replace("llama-", "");
-  const nativeEffort = supportsNativeReasoningEffort(launchState.binaryTag);
+  const nativeEffort = supportsNativeReasoningEffort(state.binaryTag);
 
   for (const f of FLAGS) {
     if (f.tool !== "both" && f.tool !== toolBase) continue;
-    if (f.id === "ngram_mod" || f.id === "ngram_map_k4v") continue; // emitted via spec_type combo
     if (values.fit === "off" && (f.id === "fit_target" || f.id === "fit_ctx")) continue;
     if (f.id === "kv_unified_per_slot" && values.kv_unified === "disabled") continue;
     if (shouldOmitSpeculativeFlag(f, values)) continue;
@@ -588,8 +581,10 @@ export function buildLaunchArgs(
 
 /** Flatten + redact + quote into a copyable command line for the preview box. */
 export function renderCommand(tool: Tool, result: LaunchArgsResult): string {
-  const launchTokens = flattenArgs(result.args);
-  const binary = isMac() ? tool : `${tool}.exe`;
-  const parts = [binary, ...redactSensitiveTokens(launchTokens)];
-  return parts.map(quoteArg).join(" ");
+  return toCommandLine(isMac() ? tool : `${tool}.exe`, flattenArgs(result.args));
+}
+
+/** Binary name + flat tokens → one redacted, quoted, space-joined command line. */
+export function toCommandLine(binary: string, flatTokens: string[]): string {
+  return [binary, ...redactSensitiveTokens(flatTokens)].map(quoteArg).join(" ");
 }

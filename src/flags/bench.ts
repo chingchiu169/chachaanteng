@@ -4,7 +4,7 @@
 
 import { FLAGS } from "./definitions";
 import type { FlagDef, FlagValues } from "./types";
-import { flattenArgs, quoteArg, redactSensitiveTokens, shouldOmitLegacyLoadFlag } from "./core";
+import { flattenArgs, shouldOmitLegacyLoadFlag, toCommandLine } from "./core";
 import { isMac } from "../lib/platform";
 
 /** Flag ids the benchmark tools actually understand (everything else is excluded).
@@ -170,8 +170,8 @@ export function buildBenchmarkArgs(options: BenchBuildOptions): BenchBuildResult
   const benchmarkType = options.benchmarkType === "perplexity" ? "perplexity" : "bench";
   const tool: "llama-bench" | "llama-perplexity" =
     benchmarkType === "perplexity" ? "llama-perplexity" : "llama-bench";
-  const flags: FlagValues = options.flags && typeof options.flags === "object" ? { ...options.flags } : {};
-  const defaultFlags: FlagValues = options.defaultFlags || {};
+  const flags: FlagValues = { ...(options.flags ?? {}) };
+  const defaultFlags: FlagValues = { ...(options.defaultFlags ?? {}) };
   const model = String(options.model || "").trim();
 
   /** True when a flag is set to something other than its default — worth reporting as excluded. */
@@ -288,7 +288,7 @@ export function buildBenchmarkArgs(options: BenchBuildOptions): BenchBuildResult
   }
 
   const flat = flattenArgs(args);
-  const command = [isMac() ? tool : `${tool}.exe`, ...redactSensitiveTokens(flat)].map(quoteArg).join(" ");
+  const command = toCommandLine(isMac() ? tool : `${tool}.exe`, flat);
   return { tool, args: flat, applied, excluded, error: null, command };
 }
 

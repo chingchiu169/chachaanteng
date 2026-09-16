@@ -478,7 +478,7 @@ export const serverProps = (port: number) => invoke<ServerJsonValue>("server_pro
 
 // --- per-server process telemetry (Rust-side FFI, no HTTP) ---------------------
 
-export interface ServerProcessStats {
+interface ServerProcessStats {
   /** CPU busy % across all logical processors; null on the first sample. */
   cpu_percent: number | null;
   /** Working-set RAM in bytes; 0 when it can't be read. */
