@@ -28,6 +28,7 @@ import { useFlags } from "../store-flags";
 import { useT } from "../i18n";
 
 import { ghostBtnMuted, inputCls, labelCls, secondaryBtn, selectCls } from "../lib/ui";
+import CommandPreview from "./CommandPreview";
 const HISTORY_KEY = "chachaanteng-bench-history";
 
 /** Reference perplexity presets (gui = our defaults, llamacpp = upstream CI settings). */
@@ -351,9 +352,11 @@ export default function BenchmarksView({ visible = false }: { visible?: boolean 
   };
 
   const elapsedMs = running && startedAtRef.current ? Date.now() - startedAtRef.current : 0;
-  const liveText = logs.join("\n");
-  const liveTs = extractBenchTs(liveText).tg; // tg only — chat typing speed
-  const livePpl = extractPpl(liveText);
+  // The per-second tick re-renders while running — derive the live stats only when new lines arrive.
+  const { text: liveText, ts: liveTs, ppl: livePpl } = useMemo(() => {
+    const text = logs.join("\n");
+    return { text, ts: extractBenchTs(text).tg /* tg only — chat typing speed */, ppl: extractPpl(text) };
+  }, [logs]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -499,30 +502,18 @@ export default function BenchmarksView({ visible = false }: { visible?: boolean 
       )}
 
       {/* command preview */}
-      <div className={`collapse rounded-none border-b border-line bg-surface ${cmdOpen ? "collapse-open" : ""}`}>
-        <button onClick={() => setCmdOpen((o) => !o)} className="collapse-title w-full px-3 py-2 text-left">
-          <i className={`fa-solid fa-caret-right inline-block text-xs leading-none text-fg-faint transition-transform ${cmdOpen ? "rotate-90" : ""}`} aria-hidden />
-          <span className="ml-1.5 text-xs font-medium text-fg-bright">{t("bench.command")}</span>
-          {result.excluded.length > 0 && (
-            <span className="badge badge-xs badge-soft badge-warning ml-2 align-middle"><i className="fa-solid fa-triangle-exclamation mr-1" aria-hidden />{result.excluded.length}</span>
-          )}
-        </button>
-        {cmdOpen && (
-          <div className="collapse-content px-3 pb-2 space-y-2">
-            {result.excluded.map((x) => (
-              <span key={x.label + x.reason} className="text-[11px] text-yellow" title={`${x.label}: ${x.reason}`}><i className="fa-solid fa-triangle-exclamation mr-1" aria-hidden />{x.label}</span>
-            ))}
-            {result.error && (
-              <div role="alert" className="alert alert-error">
-                {result.error}
-              </div>
-            )}
-            <pre className="h-20 overflow-y-auto px-3 py-2 rounded-md bg-base border border-line text-[11px] leading-relaxed text-fg-muted font-mono whitespace-pre-wrap break-all">
-              {result.command || "—"}
-            </pre>
+      <CommandPreview open={cmdOpen} onToggle={() => setCmdOpen((o) => !o)} title={t("bench.command")} warnings={result.excluded.length} text={result.command || "—"}>
+        {result.excluded.map((x) => (
+          <span key={x.label + x.reason} className="text-[11px] text-yellow" title={`${x.label}: ${x.reason}`}>
+            <i className="fa-solid fa-triangle-exclamation mr-1" aria-hidden />{x.label}
+          </span>
+        ))}
+        {result.error && (
+          <div role="alert" className="alert alert-error">
+            {result.error}
           </div>
         )}
-      </div>
+      </CommandPreview>
 
       {error && (
         <div role="alert" className="alert alert-error">
@@ -533,7 +524,7 @@ export default function BenchmarksView({ visible = false }: { visible?: boolean 
       {/* output terminal */}
       {(running || logs.length > 0) && (
         <pre ref={logRef} className={`min-h-[120px] max-h-72 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed text-fg-muted font-mono ${running ? "border-b border-line" : ""}`}>
-          {logs.join("\n")}
+          {liveText}
         </pre>
       )}
 

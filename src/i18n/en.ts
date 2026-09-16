@@ -93,6 +93,7 @@ export const en = {
   "chat.resultsNotice": "{n} results — will be included when you send",
   "chat.noResults": "No results",
   "chat.saveConvFailed": "Failed to save conversation: {err}",
+  "chat.deleteStreamingBlocked": "Stop the reply before deleting this conversation.",
   "chat.compactNeedMore": "Keep chatting first — compaction keeps the last two turns unchanged.",
   "chat.compactCtxTooSmall":
     "Context window too small to summarize safely. Increase context or start a new chat.",

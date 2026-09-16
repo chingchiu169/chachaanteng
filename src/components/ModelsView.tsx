@@ -11,7 +11,6 @@ import {
   hfSearchModels,
   hfStartDownload,
   listLocalModels,
-  saveSettings,
   type HfDownloadState,
   type HfFile,
   type HfModelHit,
@@ -28,6 +27,7 @@ import Progress from "./Progress";
 import { useT } from "../i18n";
 
 import { fetchAndSaveModelMeta } from "../lib/model-meta";
+import { saveSettingsMerged } from "../lib/settings-save";
 import { isMac } from "../lib/platform";
 import { ghostBtnMuted, inputCls, secondaryBtn, selectCls } from "../lib/ui";
 
@@ -118,13 +118,51 @@ function metaBadge(v?: string): ReactNode {
 // column sorting — every column is sortable except the actions column
 // ---------------------------------------------------------------------------
 
-type LocalSortKey = "family" | "params" | "publisher" | "model" | "alias" | "quant" | "size";
-type ImportedSortKey = "family" | "params" | "publisher" | "model" | "alias" | "quant";
+type ModelSortKey = "family" | "params" | "publisher" | "model" | "alias" | "quant" | "size";
 
 interface SortState {
   key: string;
   dir: 1 | -1; // 1 = ascending, -1 = descending
 }
+
+/** Normalized model row — both tables (local + imported) render from this shape. */
+type ModelRow = {
+  key: string;
+  family: string | null;
+  params: string | null;
+  publisher: string;
+  /** Display name in the Model column (repo id / basename, alias shown separately). */
+  model: string;
+  /** Absolute path — alias input and "use in QL". */
+  abs: string;
+  /** First line of the Model cell tooltip (relative for local files, full path for imported). */
+  titlePath: string;
+  alias: string | null;
+  quant: string | null;
+  /** Only the local table shows a Size column. */
+  size?: number;
+};
+
+/** Sort value per column — shared by both tables (missing values sink to the bottom in sortRows). */
+const SORT_GETTERS: Record<ModelSortKey, (r: ModelRow) => string | number | null> = {
+  family: (r) => r.family,
+  params: (r) => (r.params ? parseFloat(r.params) : null),
+  publisher: (r) => r.publisher,
+  model: (r) => r.model,
+  alias: (r) => r.alias,
+  quant: (r) => r.quant,
+  size: (r) => r.size ?? null,
+};
+
+/** Sortable columns in display order — the Model column's i18n key is colPath. */
+const MODEL_COLS = [
+  { key: "family", label: "models.colFamily" },
+  { key: "params", label: "models.colParams" },
+  { key: "publisher", label: "models.colPublisher" },
+  { key: "model", label: "models.colPath" },
+  { key: "alias", label: "models.colAlias" },
+  { key: "quant", label: "models.colQuant" },
+] as const;
 
 /** Click cycle on the same column: ascending → descending → back to default (natural order). A new column starts ascending. */
 const nextSort = (prev: SortState | null, key: string): SortState | null => {
@@ -162,9 +200,88 @@ function SortTh({ label, state, sortKey, onChange }: { label: string; state: Sor
   );
 }
 
+/** Shared table for local + imported models — the two differ only in the Size column and the actions cell. */
+function ModelTable<R extends ModelRow>({
+  rows,
+  sort,
+  onSort,
+  showSize = false,
+  className = "",
+  maxH,
+  actions,
+}: {
+  rows: R[];
+  sort: SortState | null;
+  onSort: (s: SortState | null) => void;
+  /** Local table shows a Size column. */
+  showSize?: boolean;
+  className?: string;
+  maxH: string;
+  actions: (row: R) => ReactNode;
+}) {
+  const t = useT();
+  const setModel = useFlags((s) => s.setModel);
+  return (
+    <div className={`border border-line rounded-md ${maxH} overflow-y-auto ${className}`}>
+      <table className="table table-sm table-fixed w-full">
+        {/* fixed layout: the Model column (no width) takes all remaining space */}
+        <colgroup>
+          <col style={{ width: "5.5rem" }} />
+          <col style={{ width: "4rem" }} />
+          <col style={{ width: "8rem" }} />
+          <col />
+          <col style={{ width: "9rem" }} />
+          <col style={{ width: "7rem" }} />
+          {showSize && <col style={{ width: "5.5rem" }} />}
+          <col style={{ width: showSize ? "6.5rem" : "13rem" }} />
+        </colgroup>
+        <thead className="sticky top-0 bg-surface z-10">
+          <tr className="text-[11px] text-fg-muted font-medium">
+            {MODEL_COLS.map((c) => (
+              <th key={c.key}>
+                <SortTh label={t(c.label)} state={sort} sortKey={c.key} onChange={onSort} />
+              </th>
+            ))}
+            {showSize && (
+              <th className="text-right">
+                <SortTh label={t("models.colSize")} state={sort} sortKey="size" onChange={onSort} />
+              </th>
+            )}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key} className="hover:bg-hover text-xs">
+              <td>{metaBadge(row.family || undefined)}</td>
+              <td className="whitespace-nowrap text-fg-muted">{row.params ?? "—"}</td>
+              <td className="whitespace-nowrap text-fg-muted">{row.publisher}</td>
+              <td>
+                <button
+                  onClick={() => setModel(row.abs)}
+                  title={`${row.titlePath}\n${t("models.useInQlTitle")}`}
+                  className="block w-full text-left font-mono truncate text-fg hover:text-accent-text"
+                >
+                  {row.model}
+                </button>
+              </td>
+              <td><ModelAliasInput path={row.abs} /></td>
+              <td>{metaBadge(row.quant || undefined)}</td>
+              {showSize && (
+                <td className="text-right whitespace-nowrap text-fg-muted">{fmtBytes(row.size ?? 0)}</td>
+              )}
+              <td className="text-right whitespace-nowrap">{actions(row)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function ModelsView({ visible = false }: { visible?: boolean }) {
   const t = useT();
-  const { settings, setSettings } = useApp();
+  const { settings } = useApp();
   const setModel = useFlags((s) => s.setModel);
 
   // models root + local listing
@@ -313,21 +430,18 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
             if (useFlags.getState().model === p) useFlags.getState().setModel("");
           }
         }
-        if (settings && gone.size > 0) {
-          // drop the path from the known-models list, the default-model slot and any display aliases
-          const hadAlias = [...gone].some((p) => (settings.model_aliases ?? {})[p] !== undefined);
-          if (settings.model_paths.some((p) => gone.has(p)) || gone.has(settings.default_model ?? "") || hadAlias) {
-            const model_aliases = { ...(settings.model_aliases ?? {}) };
+        if (gone.size > 0) {
+          // drop the path from the known-models list, the default-model slot and any display aliases —
+          // merged at write time so a concurrent settings save isn't clobbered
+          void saveSettingsMerged((s) => {
+            const model_aliases = { ...(s.model_aliases ?? {}) };
             for (const p of gone) delete model_aliases[p];
-            const next = {
-              ...settings,
-              model_paths: settings.model_paths.filter((p) => !gone.has(p)),
-              default_model: gone.has(settings.default_model ?? "") ? null : settings.default_model,
+            return {
+              model_paths: s.model_paths.filter((p) => !gone.has(p)),
+              default_model: gone.has(s.default_model ?? "") ? null : s.default_model,
               model_aliases,
             };
-            setSettings(next);
-            saveSettings(next).catch(() => {});
-          }
+          }).catch(() => {});
         }
         // always refresh — a partially-deleted cascade must not leave stale rows behind
         refreshLocal();
@@ -338,10 +452,7 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
 
   /** Set/clear this model as the default preselected in new Quick Launch tabs. */
   const toggleDefaultModel = async (abs: string) => {
-    if (!settings) return;
-    const next = { ...settings, default_model: settings.default_model === abs ? null : abs };
-    setSettings(next);
-    await saveSettings(next).catch(() => {});
+    await saveSettingsMerged((s) => ({ default_model: s.default_model === abs ? null : abs })).catch(() => {});
   };
 
   // User-imported models (Quick Launch Browse / settings.model_paths) that live
@@ -355,22 +466,18 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
 
   /** Remove only the list entry — keep the file on disk. */
   const removeImportedConfigOnly = (p: string) => {
-    if (!settings) return;
     setConfirm({
       title: t("common.delete"),
       message: t("models.removeListConfirm", { name: p.split(/[\\/]/).pop() ?? p }),
       danger: true,
       action: async () => {
-        const next = { ...settings, model_paths: settings.model_paths.filter((x) => x !== p) };
-        setSettings(next);
-        await saveSettings(next).catch(() => {});
+        await saveSettingsMerged((s) => ({ model_paths: s.model_paths.filter((x) => x !== p) })).catch(() => {});
       },
     });
   };
 
   /** Delete the file from disk AND remove the list entry. */
   const removeImportedWithFile = (p: string) => {
-    if (!settings) return;
     setConfirm({
       title: t("common.delete"),
       message: t("models.deleteFileConfirm", { name: p.split(/[\\/]/).pop() ?? p }),
@@ -388,16 +495,15 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
         // same synchronous-block rule as deleteModel — see there for why both sources must clear together
         useQl.getState().clearModel(p);
         if (useFlags.getState().model === p) useFlags.getState().setModel("");
-        const model_aliases = { ...(settings.model_aliases ?? {}) };
-        delete model_aliases[p];
-        const next = {
-          ...settings,
-          model_paths: settings.model_paths.filter((x) => x !== p),
-          default_model: settings.default_model === p ? null : settings.default_model,
-          model_aliases,
-        };
-        setSettings(next);
-        await saveSettings(next).catch(() => {});
+        await saveSettingsMerged((s) => {
+          const model_aliases = { ...(s.model_aliases ?? {}) };
+          delete model_aliases[p];
+          return {
+            model_paths: s.model_paths.filter((x) => x !== p),
+            default_model: s.default_model === p ? null : s.default_model,
+            model_aliases,
+          };
+        }).catch(() => {});
       },
     });
   };
@@ -472,15 +578,13 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
     if (!dl.model_path || adoptedRef.current === dl.model_path) return;
     adoptedRef.current = dl.model_path;
     setModel(dl.model_path);
-    if (settings && !settings.model_paths.includes(dl.model_path)) {
-      const next = { ...settings, model_paths: [...settings.model_paths, dl.model_path] };
-      setSettings(next);
-      saveSettings(next).catch(() => {});
-    }
+    void saveSettingsMerged((s) => ({
+      model_paths: s.model_paths.includes(dl.model_path) ? s.model_paths : [...s.model_paths, dl.model_path],
+    })).catch(() => {});
     refreshLocal();
     // enrich the new row with authoritative repo info (publisher / arch) — best-effort
     if (dl.repo_id) void fetchAndSaveModelMeta(dl.model_path, dl.repo_id);
-  }, [dl, settings, setModel, setSettings, refreshLocal]);
+  }, [dl, setModel, refreshLocal]);
 
   // Paired vision files are hidden (they follow their main model); orphaned ones stay visible so they can be cleaned up manually.
   // Memoized — a fresh array each render would defeat the localRows memo below (its dep never stabilizes).
@@ -501,6 +605,8 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
         // saved HF repo info wins over the filename/folder heuristics when present
         const hf = settings?.model_meta?.[abs];
         return {
+          key: f.rel_path,
+          titlePath: f.rel_path,
           f,
           abs,
           isDef: settings?.default_model === abs,
@@ -516,26 +622,19 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
     [visibleFiles, absPath, settings],
   );
 
-  const sortedLocalRows = useMemo(() => {
-    if (!sortLocal) return localRows;
-    const get: Record<LocalSortKey, (r: (typeof localRows)[number]) => string | number | null> = {
-      family: (r) => r.family,
-      params: (r) => (r.params ? parseFloat(r.params) : null),
-      publisher: (r) => r.publisher,
-      model: (r) => r.model,
-      alias: (r) => r.alias,
-      quant: (r) => r.quant,
-      size: (r) => r.size,
-    };
-    return sortRows(localRows, get[sortLocal.key as LocalSortKey], sortLocal.dir);
-  }, [localRows, sortLocal]);
+  const sortedLocalRows = useMemo(
+    () => (sortLocal ? sortRows(localRows, SORT_GETTERS[sortLocal.key as ModelSortKey], sortLocal.dir) : localRows),
+    [localRows, sortLocal],
+  );
 
   const importedRows = useMemo(
     () =>
       importedModels.map((p) => {
         const meta = parseModelMeta(p.split(/[\\/]/).pop() ?? p);
         return {
-          path: p,
+          key: p,
+          abs: p,
+          titlePath: p,
           family: meta.family ?? null,
           params: meta.params ?? null,
           // imported paths live outside the models root — no owner/repo structure to derive a publisher from
@@ -548,18 +647,10 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
     [importedModels, settings],
   );
 
-  const sortedImportedRows = useMemo(() => {
-    if (!sortImported) return importedRows;
-    const get: Record<ImportedSortKey, (r: (typeof importedRows)[number]) => string | number | null> = {
-      family: (r) => r.family,
-      params: (r) => (r.params ? parseFloat(r.params) : null),
-      publisher: (r) => r.publisher,
-      model: (r) => r.model,
-      alias: (r) => r.alias,
-      quant: (r) => r.quant,
-    };
-    return sortRows(importedRows, get[sortImported.key as ImportedSortKey], sortImported.dir);
-  }, [importedRows, sortImported]);
+  const sortedImportedRows = useMemo(
+    () => (sortImported ? sortRows(importedRows, SORT_GETTERS[sortImported.key as ModelSortKey], sortImported.dir) : importedRows),
+    [importedRows, sortImported],
+  );
 
   const active = dl && ["starting", "downloading", "cancelling"].includes(dl.status);
   const pct = dl && dl.total > 0 ? Math.min(100, Math.round((dl.downloaded / dl.total) * 100)) : null;
@@ -586,158 +677,74 @@ export default function ModelsView({ visible = false }: { visible?: boolean }) {
           </div>
         )}
         {visibleFiles.length > 0 && (
-          <div className="mt-2 border border-line rounded-md max-h-[300px] overflow-y-auto">
-            <table className="table table-sm table-fixed w-full">
-              {/* fixed layout: the Model column (no width) takes all remaining space */}
-              <colgroup>
-                <col style={{ width: "5.5rem" }} />
-                <col style={{ width: "4rem" }} />
-                <col style={{ width: "8rem" }} />
-                <col />
-                <col style={{ width: "9rem" }} />
-                <col style={{ width: "7rem" }} />
-                <col style={{ width: "5.5rem" }} />
-                <col style={{ width: "6.5rem" }} />
-              </colgroup>
-              <thead className="sticky top-0 bg-surface z-10">
-                <tr className="text-[11px] text-fg-muted font-medium">
-                  <th><SortTh label={t("models.colFamily")} state={sortLocal} sortKey="family" onChange={setSortLocal} /></th>
-                  <th><SortTh label={t("models.colParams")} state={sortLocal} sortKey="params" onChange={setSortLocal} /></th>
-                  <th><SortTh label={t("models.colPublisher")} state={sortLocal} sortKey="publisher" onChange={setSortLocal} /></th>
-                  <th><SortTh label={t("models.colPath")} state={sortLocal} sortKey="model" onChange={setSortLocal} /></th>
-                  <th><SortTh label={t("models.colAlias")} state={sortLocal} sortKey="alias" onChange={setSortLocal} /></th>
-                  <th><SortTh label={t("models.colQuant")} state={sortLocal} sortKey="quant" onChange={setSortLocal} /></th>
-                  <th className="text-right"><SortTh label={t("models.colSize")} state={sortLocal} sortKey="size" onChange={setSortLocal} /></th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedLocalRows.map((row) => {
-                  const f = row.f;
-                  return (
-                    <tr key={f.rel_path} className="hover:bg-hover text-xs">
-                      <td>{metaBadge(row.family || undefined)}</td>
-                      <td className="whitespace-nowrap text-fg-muted">{row.params ?? "—"}</td>
-                      <td className="whitespace-nowrap text-fg-muted">{row.publisher}</td>
-                      <td>
-                        <button
-                          onClick={() => setModel(row.abs)}
-                          title={`${f.rel_path}\n${t("models.useInQlTitle")}`}
-                          className="block w-full text-left font-mono truncate text-fg hover:text-accent-text"
-                        >
-                          {row.model}
-                        </button>
-                      </td>
-                      <td><ModelAliasInput path={row.abs} /></td>
-                      <td>{metaBadge(row.quant || undefined)}</td>
-                      <td className="text-right whitespace-nowrap text-fg-muted">{fmtBytes(f.size_bytes)}</td>
-                      <td className="text-right whitespace-nowrap">
-                        <span className="inline-flex items-center gap-0.5">
-                          <button
-                            onClick={() => setModel(row.abs)}
-                            title={t("models.useInQlTitle")}
-                            className="btn btn-xs btn-ghost px-1 min-h-0 text-fg-muted hover:text-accent-text"
-                          >
-                            <i className="fa-solid fa-rocket" aria-hidden />
-                          </button>
-                          <button
-                            onClick={() => toggleDefaultModel(row.abs)}
-                            title={row.isDef ? t("models.clearDefaultTitle") : t("models.setDefaultTitle")}
-                            className="btn btn-xs btn-ghost px-1 min-h-0"
-                          >
-                            <span
-                              className={`mask mask-star-2 w-4 h-4 ${row.isDef ? "bg-orange-400" : "bg-line-strong hover:bg-orange-400/70"}`}
-                            />
-                          </button>
-                          <button
-                            onClick={() => deleteModel(f)}
-                            title={`${t("common.delete")} ${f.rel_path}`}
-                            className="btn btn-xs btn-ghost px-1 min-h-0 text-fg-faint hover:text-red"
-                          >
-                            <i className="fa-solid fa-trash-can" aria-hidden />
-                          </button>
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ModelTable
+            rows={sortedLocalRows}
+            sort={sortLocal}
+            onSort={setSortLocal}
+            showSize
+            className="mt-2"
+            maxH="max-h-[300px]"
+            actions={(row) => (
+              <span className="inline-flex items-center gap-0.5">
+                <button
+                  onClick={() => setModel(row.abs)}
+                  title={t("models.useInQlTitle")}
+                  className="btn btn-xs btn-ghost px-1 min-h-0 text-fg-muted hover:text-accent-text"
+                >
+                  <i className="fa-solid fa-rocket" aria-hidden />
+                </button>
+                <button
+                  onClick={() => toggleDefaultModel(row.abs)}
+                  title={row.isDef ? t("models.clearDefaultTitle") : t("models.setDefaultTitle")}
+                  className="btn btn-xs btn-ghost px-1 min-h-0"
+                >
+                  <span
+                    className={`mask mask-star-2 w-4 h-4 ${row.isDef ? "bg-orange-400" : "bg-line-strong hover:bg-orange-400/70"}`}
+                  />
+                </button>
+                <button
+                  onClick={() => deleteModel(row.f)}
+                  title={`${t("common.delete")} ${row.f.rel_path}`}
+                  className="btn btn-xs btn-ghost px-1 min-h-0 text-fg-faint hover:text-red"
+                >
+                  <i className="fa-solid fa-trash-can" aria-hidden />
+                </button>
+              </span>
+            )}
+          />
         )}
 
         {/* user-imported models outside the root — two-tier delete */}
         {importedModels.length > 0 && (
           <>
             <div className="mt-3 text-xs font-medium text-fg-bright">{t("models.imported")}</div>
-            <div className="mt-1 border border-line rounded-md max-h-[260px] overflow-y-auto">
-              <table className="table table-sm table-fixed w-full">
-                <colgroup>
-                  <col style={{ width: "5.5rem" }} />
-                  <col style={{ width: "4rem" }} />
-                  <col style={{ width: "8rem" }} />
-                  <col />
-                  <col style={{ width: "9rem" }} />
-                  <col style={{ width: "7rem" }} />
-                  <col style={{ width: "13rem" }} />
-                </colgroup>
-                <thead className="sticky top-0 bg-surface z-10">
-                  <tr className="text-[11px] text-fg-muted font-medium">
-                    <th><SortTh label={t("models.colFamily")} state={sortImported} sortKey="family" onChange={setSortImported} /></th>
-                    <th><SortTh label={t("models.colParams")} state={sortImported} sortKey="params" onChange={setSortImported} /></th>
-                    <th><SortTh label={t("models.colPublisher")} state={sortImported} sortKey="publisher" onChange={setSortImported} /></th>
-                    <th><SortTh label={t("models.colPath")} state={sortImported} sortKey="model" onChange={setSortImported} /></th>
-                    <th><SortTh label={t("models.colAlias")} state={sortImported} sortKey="alias" onChange={setSortImported} /></th>
-                    <th><SortTh label={t("models.colQuant")} state={sortImported} sortKey="quant" onChange={setSortImported} /></th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedImportedRows.map((row) => {
-                    const p = row.path;
-                    return (
-                      <tr key={p} className="hover:bg-hover text-xs">
-                        <td>{metaBadge(row.family || undefined)}</td>
-                        <td className="whitespace-nowrap text-fg-muted">{row.params ?? "—"}</td>
-                        {/* imported paths live outside the models root — no owner/repo structure to derive a publisher from */}
-                        <td className="whitespace-nowrap text-fg-muted">—</td>
-                        <td>
-                          <button
-                            onClick={() => setModel(p)}
-                            title={`${p}\n${t("models.useInQlTitle")}`}
-                            className="block w-full text-left font-mono truncate text-fg hover:text-accent-text"
-                          >
-                            {row.model}
-                          </button>
-                        </td>
-                        <td><ModelAliasInput path={p} /></td>
-                        <td>{metaBadge(row.quant || undefined)}</td>
-                        <td className="text-right whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1">
-                            <button
-                              onClick={() => removeImportedConfigOnly(p)}
-                              title={t("models.removeListOnlyTitle")}
-                              className={ghostBtnMuted}
-                            >
-                              <i className="fa-solid fa-xmark mr-1" aria-hidden />
-                              {t("models.removeFromList")}
-                            </button>
-                            <button
-                              onClick={() => removeImportedWithFile(p)}
-                              title={t("models.deleteFileTitle")}
-                              className="btn btn-xs btn-ghost border border-line bg-raised hover:bg-red-subtle text-fg-muted hover:text-red"
-                            >
-                              <i className="fa-solid fa-trash-can mr-1" aria-hidden />
-                              {t("models.deleteFileBtn")}
-                            </button>
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <ModelTable
+              rows={sortedImportedRows}
+              sort={sortImported}
+              onSort={setSortImported}
+              className="mt-1"
+              maxH="max-h-[260px]"
+              actions={(row) => (
+                <span className="inline-flex items-center gap-1">
+                  <button
+                    onClick={() => removeImportedConfigOnly(row.abs)}
+                    title={t("models.removeListOnlyTitle")}
+                    className={ghostBtnMuted}
+                  >
+                    <i className="fa-solid fa-xmark mr-1" aria-hidden />
+                    {t("models.removeFromList")}
+                  </button>
+                  <button
+                    onClick={() => removeImportedWithFile(row.abs)}
+                    title={t("models.deleteFileTitle")}
+                    className="btn btn-xs btn-ghost border border-line bg-raised hover:bg-red-subtle text-fg-muted hover:text-red"
+                  >
+                    <i className="fa-solid fa-trash-can mr-1" aria-hidden />
+                    {t("models.deleteFileBtn")}
+                  </button>
+                </span>
+              )}
+            />
           </>
         )}
       </section>

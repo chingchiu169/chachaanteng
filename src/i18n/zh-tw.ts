@@ -94,6 +94,7 @@ export const zhTw: Record<EnKey, string> = {
   "chat.resultsNotice": "搵到 {n} 個結果 — 發送時會一併附上",
   "chat.noResults": "冇結果",
   "chat.saveConvFailed": "儲存對話失敗：{err}",
+  "chat.deleteStreamingBlocked": "請先停止回覆，先至可以刪除呢個對話。",
   "chat.compactNeedMore": "先多傾少下先 — 壓縮會保留最近兩輪唔變。",
   "chat.compactCtxTooSmall": "Context 太小，無法安全總結。加大 context 或開新對話。",
   "chat.summarizingNotice": "正在總結第 {from}–{to} 條（共 {end}）訊息…",

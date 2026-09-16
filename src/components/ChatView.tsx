@@ -142,6 +142,8 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
   // --- server selection -----------------------------------------------------
   const [servers, setServers] = useState<ServerInfo[]>([]);
   const [port, setPort] = useState(0);
+  // The user explicitly picked "no server" — the poll must not snap back to a running one.
+  const portNoneRef = useRef(false);
   const [healthy, setHealthy] = useState(false);
 
   // --- external server registration (FR8.3) ------------------------------------
@@ -298,8 +300,9 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
             ? prev
             : s,
         );
-        // auto-select the first running server when nothing selected yet
-        setPort((p) => (p === 0 && s.length > 0 ? s[0].port : p));
+        // auto-select the first running server when nothing selected yet — but never override
+        // an explicit "no server" pick made in this session
+        setPort((p) => (!portNoneRef.current && p === 0 && s.length > 0 ? s[0].port : p));
       } catch {
         /* app not ready */
       }
@@ -447,6 +450,13 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
     }
   }, []);
 
+  // Re-list on every show — recovers a failed startup load (db not ready) and picks up
+  // conversations created elsewhere. One extra cheap read when the tab is visible at mount.
+  useEffect(() => {
+    if (!visible) return;
+    void refreshConvs();
+  }, [visible, refreshConvs]);
+
   const loadConversation = async (id: number, meta?: ConversationMeta) => {
     // A stream outlives tab switches — never switch AWAY from the conversation being replied to,
     // but (re)loading it itself is how a remount resumes mid-stream.
@@ -468,7 +478,10 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
       const m = meta ?? convsRef.current.find((c) => c.id === id);
       // Per-conversation server pick — restore this conversation's port.
       const sp = (m?.params as { serverPort?: unknown } | null)?.serverPort;
-      if (typeof sp === "number" && sp > 0) setPort(sp);
+      if (typeof sp === "number" && sp > 0) {
+        portNoneRef.current = false;
+        setPort(sp);
+      }
       const record = (m?.params as { compaction?: CompactionRecord } | null)?.compaction;
       const view = workingMessages(
         stored.map((sm) => ({ role: sm.role as Msg["role"], content: parseStoredContent(sm.content) })),
@@ -530,6 +543,15 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
     const id = deleteTarget;
     setDeleteTarget(null);
     if (id == null) return;
+    // Deleting the conversation that is mid-reply would strand activeConvId on a deleted row:
+    // newChat() below early-returns on its streaming guard, and send()'s finally would append
+    // the in-flight reply to the deleted id.
+    const st = useChatStream.getState();
+    if (st.streaming && st.convId === id) {
+      setNotice(t("chat.deleteStreamingBlocked"));
+      setNoticeError(true);
+      return;
+    }
     await deleteConversation(id);
     if (activeConvId === id) newChat();
     void refreshConvs();
@@ -613,6 +635,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
     if (
       (!text && attachments.length === 0) ||
       useChatStream.getState().streaming ||
+      compacting ||
       sendingRef.current ||
       loadingConvRef.current ||
       !effPort ||
@@ -969,6 +992,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
                     value={portLive ? port : 0}
                     onChange={(e) => {
                       const p = Number(e.target.value);
+                      portNoneRef.current = p === 0;
                       setPort(p);
                       void persistConvServerPort(p);
                     }}
@@ -1132,12 +1156,12 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
               </span>
             </div>
           )}
-          {/* context capacity bar — above the input, out of the header row */}
-          {!focusMode && capacity !== null && totalEstimate !== null && (
+          {/* context capacity bar — above the input, out of the header row (pct follows totalEstimate) */}
+          {!focusMode && capacity !== null && totalEstimate !== null && pct !== null && (
             <div className="flex items-center gap-2" title={t("chat.capacityTitle", { used: totalEstimate, cap: capacity })}>
               <progress
-                className={`flex-1 progress ${pct !== null && pct >= 90 ? "progress-error" : pct !== null && pct >= 70 ? "progress-warning" : "progress-success"}`}
-                value={pct ?? 0}
+                className={`flex-1 progress ${pct >= 90 ? "progress-error" : pct >= 70 ? "progress-warning" : "progress-success"}`}
+                value={pct}
                 max={100}
               />
               <span className="text-[11px] text-fg-muted tabular-nums">
@@ -1176,7 +1200,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
               onKeyDown={onSendKey}
               placeholder={t("chat.inputPh")}
               rows={focusMode ? 3 : 2}
-              disabled={!healthy || streaming}
+              disabled={!healthy || streaming || compacting}
               className="w-full bg-transparent resize-none text-sm text-fg placeholder:text-fg-faint focus:outline-none disabled:opacity-50"
             />
             <div className="flex items-center gap-2 mt-1.5">
@@ -1199,7 +1223,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
                 <option value="medium">{t("chat.effortMedium")}</option>
                 <option value="high">{t("chat.effortHigh")}</option>
               </select>
-              <button onClick={() => void pickAttachments()} disabled={!healthy || streaming} className="btn btn-xs" title={t("chat.attachTitle")}>
+              <button onClick={() => void pickAttachments()} disabled={!healthy || streaming || compacting} className="btn btn-xs" title={t("chat.attachTitle")}>
                 <i className="fa-solid fa-paperclip" aria-hidden />
               </button>
               <button
@@ -1228,7 +1252,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
               ) : (
                 <button
                   onClick={() => void send()}
-                  disabled={!healthy || (!input.trim() && attachments.length === 0)}
+                  disabled={!healthy || compacting || (!input.trim() && attachments.length === 0)}
                   className="btn btn-xs btn-primary"
                 >
                   {t("chat.send")}

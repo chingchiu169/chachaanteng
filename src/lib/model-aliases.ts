@@ -1,5 +1,4 @@
-import { useApp } from "../store";
-import { saveSettings } from "./api";
+import { saveSettingsMerged } from "./settings-save";
 
 /** Alias lookup tolerant of separator style (keys are absolute paths; adopted orphans may differ). */
 function lookupAlias(aliases: Record<string, string> | null | undefined, path: string): string | undefined {
@@ -32,13 +31,11 @@ export function modelDisplayName(
 
 /** Set or clear the display alias for a model path. Empty string clears it (keeps the map sparse). */
 export async function setModelAlias(path: string, alias: string): Promise<void> {
-  const s = useApp.getState().settings;
-  if (!s) return;
-  const aliases = { ...(s.model_aliases ?? {}) };
-  const trimmed = alias.trim();
-  if (trimmed) aliases[path] = trimmed;
-  else delete aliases[path];
-  const next = { ...s, model_aliases: aliases };
-  useApp.getState().setSettings(next);
-  await saveSettings(next).catch(() => {});
+  await saveSettingsMerged((s) => {
+    const aliases = { ...(s.model_aliases ?? {}) };
+    const trimmed = alias.trim();
+    if (trimmed) aliases[path] = trimmed;
+    else delete aliases[path];
+    return { model_aliases: aliases };
+  }).catch(() => {});
 }

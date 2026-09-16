@@ -3,16 +3,15 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   getOnboardingData,
-  getSettings,
   hfGetDownloadStatus,
   hfStartDownload,
   installBuild,
   listLocalModels,
-  saveSettings,
   validateCustomEngine,
 } from "../lib/api";
 import type { HfDownloadState } from "../lib/api";
 import type { BuildAsset, OnboardingData } from "../types";
+import { saveSettingsMerged } from "../lib/settings-save";
 import { useT } from "../i18n";
 import type { EnKey } from "../i18n/en";
 import Progress from "./Progress";
@@ -110,8 +109,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     getOnboardingData().then(setData).catch((e) => setError(String(e)));
     // progress events (registered once)
-    let unlisten: (() => void) | undefined;
-    listen<{ phase?: string; received: number; total: number | null; file?: string }>(
+    const un = listen<{ phase?: string; received: number; total: number | null; file?: string }>(
       "build-download-progress",
       (e) => {
         setProgress((p) => ({
@@ -122,17 +120,18 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
           file: e.payload.file ?? p?.file ?? "",
         }));
       },
-    ).then((fn) => (unlisten = fn));
-    return () => unlisten?.();
+    );
+    return () => {
+      un.then((f) => f());
+    };
   }, []);
 
   useEffect(() => {
     hfGetDownloadStatus().then(setDl).catch(() => {});
-    let unlisten: (() => void) | undefined;
-    listen<HfDownloadState>("hf-download-progress", (e) => setDl(e.payload)).then(
-      (fn) => (unlisten = fn),
-    );
-    return () => unlisten?.();
+    const un = listen<HfDownloadState>("hf-download-progress", (e) => setDl(e.payload));
+    return () => {
+      un.then((f) => f());
+    };
   }, []);
 
   useEffect(() => {
@@ -161,8 +160,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
       // probe the exe first so a broken path never becomes the active engine;
       // accepts either the .exe or its folder (resolved server-side)
       const res = await validateCustomEngine(customPath.trim());
-      const s = await getSettings();
-      await saveSettings({ ...s, engine_exe: res.path });
+      await saveSettingsMerged(() => ({ engine_exe: res.path }));
       setStep("model");
     } catch (e) {
       setError(String(e));

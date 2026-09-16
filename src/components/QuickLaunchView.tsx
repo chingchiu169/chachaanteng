@@ -5,16 +5,15 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   estimateMemory,
   getServerLogs,
-  getSettings,
   launchServer,
   listServers,
-  saveSettings,
   serverHealth,
   stopServer,
   type MemoryEstimate,
 } from "../lib/api";
 import { buildEffectiveFlagValues, buildLaunchArgs, flattenArgs, renderCommand } from "../flags/core";
 import type { FlagValues } from "../flags/types";
+import CommandPreview from "./CommandPreview";
 import PresetsPanel, { type PresetData } from "./PresetsPanel";
 import ConfirmDialog from "./ConfirmDialog";
 import ModelAliasInput from "./ModelAliasInput";
@@ -26,6 +25,7 @@ import { useApp } from "../store";
 import { useT } from "../i18n";
 
 import { ghostBtn, inputCls, labelCls, secondaryBtn, selectCls } from "../lib/ui";
+import { saveSettingsMerged } from "../lib/settings-save";
 
 function fmtGb(mib: number): string {
   return `${(mib / 1024).toFixed(1)} GB`;
@@ -64,7 +64,7 @@ function NumField({ value, onCommit, onClear, className = "w-24" }: {
 
 export default function QuickLaunchView({ visible = false }: { visible?: boolean }) {
   const t = useT();
-  const { settings, engines, setSettings } = useApp();
+  const { settings, engines } = useApp();
   const { model: storeModel, setModel, applyValues, binaryTag, setBinaryTag } = useFlags();
   const { global, overrides, loaded: scopesLoaded } = useScopes();
 
@@ -354,17 +354,10 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
     });
     if (typeof path !== "string" || !path || !active) return;
     patchTab(active.id, { model: path, values: effectiveFor(global, overrides, path) });
-    // persist so the pick shows up in the dropdown now and on next launch
-    try {
-      const s = await getSettings();
-      if (!s.model_paths.includes(path)) {
-        const next = { ...s, model_paths: [...s.model_paths, path] };
-        await saveSettings(next);
-        setSettings(next);
-      }
-    } catch {
-      // non-fatal — the pick still works for this session
-    }
+    // persist so the pick shows up in the dropdown now and on next launch (non-fatal — it works this session either way)
+    await saveSettingsMerged((s) => ({
+      model_paths: s.model_paths.includes(path) ? s.model_paths : [...s.model_paths, path],
+    })).catch(() => {});
   };
 
   const setActiveFlag = (id: string, value: unknown) => {
@@ -375,12 +368,19 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
     patchTab(active.id, { values });
   };
 
-  // auto-scroll the active tab's log view
+  // auto-scroll the active tab's log view — only while near the bottom, so scrolling up to read
+  // history mid-run isn't yanked back down on every appended line (same pattern as ChatView)
   const logRef = useRef<HTMLPreElement>(null);
+  const logAtBottomRef = useRef(true);
+  const prevLogTabRef = useRef<string | null>(null);
   useEffect(() => {
+    if (prevLogTabRef.current !== active?.id) {
+      prevLogTabRef.current = active?.id;
+      logAtBottomRef.current = true; // switching tabs lands on the latest line
+    }
     const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [active?.logs.length]);
+    if (el && logAtBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [active?.logs.length, active?.id]);
 
   // dropdown options: known models + whatever the active tab has selected
   const modelOptions = Array.from(
@@ -577,17 +577,13 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
           </div>
 
           {/* command preview */}
-          <div className={`collapse shrink-0 rounded-none border-b border-line bg-surface ${cmdOpen ? "collapse-open" : ""}`}>
-            <div
-              onClick={() => setCmdOpen((o) => !o)}
-              className="collapse-title w-full px-3 py-2 flex items-center gap-1.5 select-none"
-            >
-              <i className={`fa-solid fa-caret-right inline-block text-xs leading-none text-fg-faint transition-transform ${cmdOpen ? "rotate-90" : ""}`} aria-hidden />
-              <span className="ml-1.5 text-xs font-medium text-fg-bright">{t("ql.command")}</span>
-              {result.warnings.length > 0 && (
-                <span className="badge badge-xs badge-soft badge-warning ml-2 align-middle"><i className="fa-solid fa-triangle-exclamation mr-1" aria-hidden />{result.warnings.length}</span>
-              )}
-              {/* copy lives on the title row — visible without expanding */}
+          <CommandPreview
+            open={cmdOpen}
+            onToggle={() => setCmdOpen((o) => !o)}
+            title={t("ql.command")}
+            warnings={result.warnings.length}
+            extra={
+              // copy lives on the title row — visible without expanding
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -597,20 +593,16 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
               >
                 {t("ql.copyCommand")}
               </button>
-            </div>
-            {cmdOpen && (
-              <div className="collapse-content px-3 pb-2 space-y-2">
-                {result.warnings.map((w) => (
-                  <div key={w} role="alert" className="alert alert-warning">
-                    {w}
-                  </div>
-                ))}
-                <pre className="h-24 overflow-y-auto px-3 py-2 rounded-md bg-base border border-line text-[11px] leading-relaxed text-fg-muted font-mono whitespace-pre-wrap break-all">
-                  {commandLine}
-                </pre>
+            }
+            text={commandLine}
+            tall
+          >
+            {result.warnings.map((w) => (
+              <div key={w} role="alert" className="alert alert-warning">
+                {w}
               </div>
-            )}
-          </div>
+            ))}
+          </CommandPreview>
 
           {/* FR3 — presets: shared across tabs, applied to the active one */}
           <PresetsPanel onApply={applyPreset} currentPort={active.port} />
@@ -626,6 +618,10 @@ export default function QuickLaunchView({ visible = false }: { visible?: boolean
           {/* logs — the pre is ALWAYS rendered (it's the flex-1 filler that pins the bottom bar); kept visible after an unexpected exit */}
           <pre
             ref={logRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              logAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            }}
             className="flex-1 min-h-0 overflow-y-auto bg-surface px-3 py-2 text-[11px] leading-relaxed text-fg-muted font-mono"
           >
             {active.logs.length

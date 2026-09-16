@@ -3,8 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { open as openFileDialog, message } from "@tauri-apps/plugin-dialog";
 import {
   getModelsDirInfo,
-  getSettings,
-  saveSettings,
   tunnelStatus,
   tunnelStart,
   tunnelStop,
@@ -28,6 +26,7 @@ import type { EnKey } from "../i18n/en";
 import { useThemeMode, type Mode } from "../lib/themes";
 import { isMac } from "../lib/platform";
 import { inputCls, raisedBtn, selectCls } from "../lib/ui";
+import { saveSettingsMerged } from "../lib/settings-save";
 
 const TUNNEL_ACTIVE = ["preparing", "downloading", "starting", "running"];
 
@@ -41,7 +40,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: EnKey }[] = [
 
 export default function SettingsView({ visible = false }: { visible?: boolean }) {
   const t = useT();
-  const { settings, engines, setSettings, setEngines } = useApp();
+  const { settings, engines, setEngines } = useApp();
   const [engineExe, setEngineExe] = useState("");
   /** Effective models root (app default until the user picks another folder). */
   const [modelsDir, setModelsDir] = useState("");
@@ -181,11 +180,8 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
 
   /** Set an installed engine as the active one — persists immediately (no Save needed). */
   const setActiveEngine = async (path: string) => {
-    if (!settings) return;
     setEngineExe(path);
-    const next = { ...settings, engine_exe: path };
-    setSettings(next);
-    await saveSettings(next).catch(() => {});
+    await saveSettingsMerged(() => ({ engine_exe: path })).catch(() => {});
   };
 
   /** Delete an installed engine folder; clear the active pointer if it was selected. */
@@ -197,11 +193,9 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
       const list = await listInstalledEngines();
       setInstalled(list);
       setEngines(list); // keep the app store in sync for other views
-      if (settings && settings.engine_exe === e.path) {
+      if (settings?.engine_exe === e.path) {
         setEngineExe("");
-        const next = { ...settings, engine_exe: null };
-        setSettings(next);
-        await saveSettings(next).catch(() => {});
+        await saveSettingsMerged(() => ({ engine_exe: null })).catch(() => {});
       }
     } catch (err) {
       setEngErr(String(err));
@@ -219,11 +213,7 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
       const list = await listInstalledEngines();
       setInstalled(list);
       setEngines(list); // keep the app store in sync for other views
-      if (settings) {
-        const next = { ...settings, engine_exe: exePath };
-        setSettings(next);
-        saveSettings(next).catch(() => {});
-      }
+      void saveSettingsMerged(() => ({ engine_exe: exePath })).catch(() => {});
     } catch (e) {
       setEngErr(String(e));
     } finally {
@@ -298,29 +288,19 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
   /** Toggle the clock format — persists immediately (like language/theme), no Save needed. */
   const toggle24h = async (checked: boolean) => {
     setUse24h(checked);
-    try {
-      const s = await getSettings();
-      const next = { ...s, use_24h: checked };
-      await saveSettings(next);
-      setSettings(next);
-    } catch {
-      /* non-fatal — the Save button below still persists it */
-    }
+    // non-fatal — the Save button below still persists it
+    await saveSettingsMerged(() => ({ use_24h: checked })).catch(() => {});
   };
 
   const save = async () => {
     try {
-      const s = await getSettings();
-      const next = {
-        ...s,
+      await saveSettingsMerged(() => ({
         engine_exe: engineExe || null,
         models_dir: modelsDir || null,
         searxng_url: searxngUrl.trim() || null,
         use_24h: use24h,
         log_retention_days: logRetention,
-      };
-      await saveSettings(next);
-      setSettings(next);
+      }));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {

@@ -6,22 +6,7 @@ import { useT } from "../i18n";
 import { useApp } from "../store";
 import { useMonitor, type ServerPanel } from "../store-monitor";
 import { useQl, type QlTab } from "../store-ql";
-
-function fmtBytes(bytes: number): string {
-  if (bytes <= 0) return "—";
-  const gb = bytes / 1024 ** 3;
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${Math.round(bytes / 1024 ** 2)} MB`;
-}
-
-function fmtCount(v: number | null): string {
-  return v === null ? "—" : Math.round(v).toLocaleString();
-}
-
-/** tok/s values — whole numbers are plenty at this scale (same as MonitorView's tiles). */
-function fmtTokS(v: number | null): string {
-  return v === null ? "—" : `${Math.round(v)} t/s`;
-}
+import { fmtBytes, fmtCount, fmtTokS } from "../lib/format";
 
 /** Engine display tag — version + backend type derived from the install dir name
  *  ("b10919-cpu" → "b10919 · cpu", "b7184-cuda-12.4" → "b7184 · cuda-12.4"). */

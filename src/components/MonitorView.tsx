@@ -8,31 +8,9 @@ import { fmtClock } from "../lib/time";
 import { parsePrometheus } from "../lib/prometheus";
 import { isMac } from "../lib/platform";
 import { ghostBtn } from "../lib/ui";
+import { fmtBytes, fmtCount, fmtRate, fmtTok } from "../lib/format";
 
 const POLL_MS = 2000; // matches the Rust-side cache TTL — every tick gets a fresh sample (system stats only)
-
-function fmtBytes(bytes: number): string {
-  if (bytes <= 0) return "—";
-  const gb = bytes / (1024 ** 3);
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${(bytes / (1024 ** 2)).toFixed(0)} MB`;
-}
-
-function fmtRate(bps: number): string {
-  const mb = bps / (1024 ** 2);
-  if (mb >= 1) return `${mb.toFixed(1)} MB/s`;
-  return `${(bps / 1024).toFixed(0)} KB/s`;
-}
-
-/** tok/s for tiles — whole numbers are plenty at this scale; "—" until a rate exists. */
-function fmtTok(v: number | null | undefined): string {
-  return v === null || v === undefined ? "—" : `${Math.round(v)}`;
-}
-
-/** Cumulative token counters — grouped digits so millions stay readable; "—" until first sample. */
-function fmtCount(v: number | null | undefined): string {
-  return v === null || v === undefined ? "—" : Math.round(v).toLocaleString();
-}
 
 /** Fill color by load — app palette tokens (theme-aware), same hues as daisyUI's progress-*. */
 function barVariant(pct: number): string {
