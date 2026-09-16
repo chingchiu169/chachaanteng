@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { check as checkForUpdate } from "@tauri-apps/plugin-updater";
+import type { Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { open as openFileDialog, message } from "@tauri-apps/plugin-dialog";
 import {
   getModelsDirInfo,
@@ -65,6 +68,17 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
   const [gitErr, setGitErr] = useState("");
   const [pulling, setPulling] = useState(false);
   const [pulled, setPulled] = useState<GitPullResult | null>(null);
+
+  // App updates — installer builds only (NSIS/DMG via tauri-plugin-updater + GitHub Releases).
+  type UpdPhase =
+    | { kind: "idle" }
+    | { kind: "checking" }
+    | { kind: "upToDate" }
+    | { kind: "available"; version: string; update: Update }
+    | { kind: "downloading"; pct: number; update: Update }
+    | { kind: "installing" };
+  const [upd, setUpd] = useState<UpdPhase>({ kind: "idle" });
+  const [updErr, setUpdErr] = useState("");
 
   // Engine tab — version download + installed engines
   const [versions, setVersions] = useState<EngineVersion[]>([]);
@@ -263,6 +277,40 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
       void message(String(e));
     } finally {
       setPulling(false);
+    }
+  };
+
+  const checkAppUpdate = async () => {
+    setUpd({ kind: "checking" });
+    setUpdErr("");
+    try {
+      const update = await checkForUpdate();
+      if (!update) setUpd({ kind: "upToDate" });
+      else setUpd({ kind: "available", version: update.version, update });
+    } catch (e) {
+      setUpdErr(String(e));
+      setUpd({ kind: "idle" });
+    }
+  };
+
+  const doInstallUpdate = async (update: Update) => {
+    setUpd({ kind: "downloading", pct: 0, update });
+    setUpdErr("");
+    let total = 0;
+    let received = 0; // Progress events carry per-chunk lengths — accumulate for the bar
+    try {
+      await update.downloadAndInstall((ev) => {
+        if (ev.event === "Started") total = ev.data.contentLength ?? 0;
+        else if (ev.event === "Progress" && total > 0) {
+          received += ev.data.chunkLength;
+          setUpd({ kind: "downloading", pct: Math.min(100, Math.round((received / total) * 100)), update });
+        } else if (ev.event === "Finished") setUpd({ kind: "installing" });
+      });
+      // Windows exits the app after launching the installer; macOS needs an explicit relaunch.
+      await relaunch();
+    } catch (e) {
+      setUpdErr(String(e));
+      setUpd({ kind: "available", version: update.version, update });
     }
   };
 
@@ -599,6 +647,62 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
         {/* External servers — CRUD for the saved address book + their stored keys */}
         {tab === "external" && <ExtServersPanel visible={visible} />}
 
+        {/* App updates — installer builds only; hidden in dev so a dev build never chases real releases */}
+        {tab === "general" && !import.meta.env.DEV && (
+          <section className="bg-surface p-3 space-y-2">
+            <div className="text-xs font-medium text-fg-bright">{t("settings.updTitle")}</div>
+            <p className="text-[11px] text-fg-muted">{t("settings.updHelp")}</p>
+            {updErr && (
+              <div role="alert" className="alert alert-error">
+                {updErr}
+              </div>
+            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {(upd.kind === "idle" || upd.kind === "upToDate") && (
+                <button onClick={() => void checkAppUpdate()} className="btn btn-xs">
+                  {t("settings.updCheck")}
+                </button>
+              )}
+              {upd.kind === "checking" && (
+                <span className="text-[11px] text-fg-muted">
+                  <i className="fa-solid fa-spinner fa-spin mr-1" aria-hidden />
+                  {t("settings.updChecking")}
+                </span>
+              )}
+              {upd.kind === "upToDate" && (
+                <span className="text-[11px] text-green">
+                  <i className="fa-solid fa-check mr-1" aria-hidden />
+                  {t("settings.upToDate")}
+                </span>
+              )}
+              {upd.kind === "available" && (
+                <>
+                  <span className="badge badge-sm badge-soft badge-warning">
+                    <i className="fa-solid fa-arrow-down mr-1" aria-hidden />
+                    {t("settings.updAvailable", { version: upd.version })}
+                  </span>
+                  <button onClick={() => void doInstallUpdate(upd.update)} className="btn btn-primary btn-xs">
+                    {t("settings.updInstall")}
+                  </button>
+                </>
+              )}
+              {upd.kind === "downloading" && (
+                <>
+                  <div className="flex-1 min-w-[200px] max-w-[300px]">
+                    <Progress value={upd.pct} />
+                  </div>
+                  <span className="text-[11px] text-fg-muted shrink-0">{t("settings.updDownloading", { pct: upd.pct })}</span>
+                </>
+              )}
+              {upd.kind === "installing" && (
+                <span className="text-[11px] text-fg-muted">
+                  <i className="fa-solid fa-spinner fa-spin mr-1" aria-hidden />
+                  {t("settings.updInstalling")}
+                </span>
+              )}
+            </div>
+          </section>
+        )}
         {/* Git update (FR8.2) — lives in General now that the Developer tab is gone */}
         {tab === "general" && (
           <>

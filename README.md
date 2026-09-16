@@ -84,17 +84,66 @@ src-tauri/src/        Rust core
 - [x] Benchmarks — llama-bench + perplexity runners with history
 - [x] Monitor — live tok/s (total + active-time averages), slot busy state, per-process CPU/RAM/GPU telemetry
 - [x] External servers address book (OS credential-store key encryption) + Cloudflare tunnel
+- [x] Conversation search — case-insensitive across titles and message contents, match snippets in the sidebar
+- [x] Export conversation — any chat as Markdown or JSON via save dialog
+- [x] Trash & undo — soft delete with 6s Undo notice; trash view (restore / permanent delete / empty), 30-day auto-purge
+- [x] Auto-update for installer users — tauri-plugin-updater + GitHub Releases manifest (NSIS / DMG); the git-based flow still covers source installs
 - [x] macOS support · dark/light theme · EN / 繁體中文
 
 ### Up next
 
-- [ ] **Conversation search** — full-text across all conversations and messages (SQLite FTS), plus find-in-chat within a conversation
-- [ ] **Export conversation** — download any chat as Markdown or JSON
-- [ ] **Trash & undo** — soft-delete with restore instead of the irreversible confirm dialog
-- [ ] **Auto-update for installer users** — Tauri updater plugin (NSIS / DMG); today only the git-based flow covers source installs
 - [ ] **Model comparison chat** — send one prompt to several running servers, side-by-side replies with per-server tok/s
 - [ ] **Per-reply stats** — prompt tokens / generation time / t/s in each assistant bubble footer (data already available)
 - [ ] **Speculative decoding wizard** — one-click "speed up" that picks draft/ngram settings from the VRAM fit estimate
 - [ ] **Local RAG / document chat** — lightweight knowledge base over local files (needs an embedding pipeline)
 - [ ] **Agent / MCP surface** — tool-calling for the built-in web search + external servers
 - [ ] **Preset sharing** — export/import preset JSON, community presets later
+
+## Releasing
+
+Installer users update through `tauri-plugin-updater`, which fetches a static
+`latest.json` manifest from GitHub Releases:
+
+```
+https://github.com/chingchiu169/chachaanteng/releases/latest/download/latest.json
+```
+
+**One-time setup** — generate the updater signing keypair (keep the private key OUT of the repo):
+
+```sh
+./node_modules/.bin/tauri signer generate -w "$HOME/.tauri/chachaanteng-updater.key" --ci
+# paste the printed public key into src-tauri/tauri.conf.json → plugins.updater.pubKey
+```
+
+**Per release:**
+
+1. Bump the version in **both** `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` (a mismatch fails `tauri build`). Keep tags as `vX.Y.Z` — the git-based flow for source installs relies on them.
+2. Build with the signing key exported:
+
+   ```sh
+   export TAURI_SIGNING_PRIVATE_KEY_PATH="$HOME/.tauri/chachaanteng-updater.key"
+   npm run tauri build
+   ```
+
+3. New artifacts beyond the usual installer: `*-setup.exe.sig` (Windows) and, on macOS, `*.app.tar.gz` + its `.sig`. The macOS updater downloads the **tarball, not the dmg** — upload both.
+4. Author `latest.json` for the release (do not commit it):
+
+   ```json
+   {
+     "version": "0.2.0",
+     "notes": "Release notes…",
+     "pub_date": "2026-09-17T00:00:00Z",
+     "platforms": {
+       "windows-x86_64": {
+         "url": "https://github.com/chingchiu169/chachaanteng/releases/download/v0.2.0/ChaChaanTeng_0.2.0_x64-setup.exe",
+         "signature": "<contents of the .sig file>"
+       },
+       "darwin-aarch64": {
+         "url": "https://github.com/chingchiu169/chachaanteng/releases/download/v0.2.0/ChaChaanTeng_0.2.0_aarch64.app.tar.gz",
+         "signature": "<contents of the .sig file>"
+       }
+     }
+   }
+   ```
+
+5. Create the release with all assets (installer, `.sig` files, `app.tar.gz`, `latest.json`). The portable build is intentionally not part of auto-update — it updates by manual download.
