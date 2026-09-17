@@ -1335,7 +1335,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
                   </button>
                 </div>
                 {extError && (
-                  <div role="alert" className="alert alert-error">
+                  <div role="alert" className="alert alert-error alert-soft">
                     {extError}
                   </div>
                 )}
@@ -1348,7 +1348,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
               </p>
             )}
             {notice && (
-              <div role="alert" className={`alert ${noticeError ? "alert-error" : "alert-info"}`}>
+              <div role="alert" className={`alert alert-soft ${noticeError ? "alert-error" : "alert-info"}`}>
                 {notice}
               </div>
             )}
@@ -1531,7 +1531,7 @@ export default function ChatView({ visible = false }: { visible?: boolean }) {
             <motion.div
               key={undoDelete.id}
               role="alert"
-              className="alert alert-info flex items-center gap-2 pointer-events-auto"
+              className="alert alert-info alert-soft flex items-center gap-2 pointer-events-auto"
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
