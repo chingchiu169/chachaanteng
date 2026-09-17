@@ -121,7 +121,9 @@ https://github.com/chingchiu169/chachaanteng/releases/latest/download/latest.jso
 2. Build with the signing key exported (`bundle.createUpdaterArtifacts` must be `true` — it is in the committed config; without it no `.sig`/tarball artifacts are produced and the updater has nothing to verify):
 
    ```sh
-   # The bundler reads the key CONTENT from TAURI_SIGNING_PRIVATE_KEY (the _PATH variant only works with `tauri signer sign`):
+   # The bundler reads the key CONTENT from TAURI_SIGNING_PRIVATE_KEY (the _PATH variant only works with `tauri signer sign`).
+   # Keys generated with --ci are encrypted with an EMPTY password — set the password var to "" or the build hangs on an interactive prompt:
+   export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
    export TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.tauri/chachaanteng-updater.key")"   # macOS/Linux
    export TAURI_SIGNING_PRIVATE_KEY="$(cat C:/Users/<you>/.tauri/chachaanteng-updater.key)"  # Windows (Git Bash)
    npm run tauri build
