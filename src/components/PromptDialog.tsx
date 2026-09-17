@@ -72,17 +72,17 @@ export default function PromptDialog({
       }}
     >
       <div className="modal-box">
-        {title && <h3 className="text-base font-semibold text-fg-bright">{title}</h3>}
+        {title && <h3 className="text-base text-sm font-semibold text-fg-bright">{title}</h3>}
         <form onSubmit={submit}>
           <input
             ref={inputRef}
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder={placeholder}
-            className={`input border border-line-strong text-fg w-full ${title ? "mt-3" : ""}`}
+            className={`input input-xs border border-line-strong text-fg w-full ${title ? "mt-3" : ""}`}
           />
           <div className="modal-action">
-            <button type="button" className="btn btn-ghost" onClick={() => ref.current?.close()}>
+            <button type="button" className="btn btn-ghost btn-xs" onClick={() => ref.current?.close()}>
               {cancelLabel}
             </button>
             <button type="submit" disabled={!value.trim()} className="btn btn-xs btn-primary">
