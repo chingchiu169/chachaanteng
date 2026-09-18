@@ -20,8 +20,11 @@ export interface QlTab {
   lastExitCode: number | null;
 }
 
-let tabSeq = 0;
-const newTabId = () => `ql-${++tabSeq}-${Date.now().toString(36)}`;
+// HMR-safe singleton — see store.ts for why a plain module-scope create() is not enough in dev.
+// The tab-id counter lives here too so hot updates can't restart it and mint duplicate ids.
+const w = window as unknown as { __qlStore?: ReturnType<typeof makeQlStore>; __qlTabSeq?: number };
+
+const newTabId = () => `ql-${(w.__qlTabSeq = (w.__qlTabSeq ?? 0) + 1)}-${Date.now().toString(36)}`;
 
 /** Idle-tab factory — shared by init() and addIdleTab(). */
 function makeIdleTab(engineExe: string, port: number, model: string): QlTab {
@@ -192,6 +195,4 @@ function makeQlStore() {
   }));
 }
 
-// HMR-safe singleton — see store.ts for why a plain module-scope create() is not enough in dev.
-const w = window as unknown as { __qlStore?: ReturnType<typeof makeQlStore> };
 export const useQl: ReturnType<typeof makeQlStore> = (w.__qlStore ??= makeQlStore());

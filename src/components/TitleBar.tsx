@@ -22,15 +22,25 @@ const LANGS: { code: Lang; label: string }[] = [
 ];
 
 /** Shared maximized state — TitleBar and ResizeHandles both read it, one window listener total. */
-const useMaximizedStore = create<{ maximized: boolean; set: (m: boolean) => void }>((set) => ({
-  maximized: false,
-  set: (maximized) => set({ maximized }),
-}));
+function makeMaximizedStore() {
+  return create<{ maximized: boolean; set: (m: boolean) => void }>((set) => ({
+    maximized: false,
+    set: (maximized) => set({ maximized }),
+  }));
+}
 
-let trackingStarted = false;
+// HMR-safe singleton (same pattern as store.ts): a plain create() would yield one store per Vite
+// module version, and the tracking flag below would re-register a window listener on every hot
+// update — listeners accumulate and write into stale stores.
+const w = window as unknown as {
+  __maximizedStore?: ReturnType<typeof makeMaximizedStore>;
+  __maximizedTracking?: boolean;
+};
+const useMaximizedStore = (w.__maximizedStore ??= makeMaximizedStore());
+
 function startMaximizedTracking(): void {
-  if (trackingStarted) return;
-  trackingStarted = true;
+  if (w.__maximizedTracking) return;
+  w.__maximizedTracking = true;
   const win = getCurrentWindow();
   try {
     void win.isMaximized().then((m) => useMaximizedStore.getState().set(m)).catch(() => {});
