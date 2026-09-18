@@ -324,10 +324,13 @@ export default function BenchmarksView({ visible = false }: { visible?: boolean 
     setError("");
     setLogs([]);
     try {
+      // Reset BEFORE spawn: lines emitted between process start and a post-spawn reset would be
+      // appended to the window buffer first, then wiped — saved history lost its opening lines.
+      resetBenchEvents({ tool: result.tool, model: currentModel, startedAtMs: null });
       const status = await benchStart(engineExe, result.tool, result.args);
       const t0 = Date.now();
       startedAtRef.current = t0;
-      resetBenchEvents({ tool: result.tool, model: currentModel, startedAtMs: t0 });
+      setBenchRunContext({ tool: result.tool, model: currentModel, startedAtMs: t0 });
       setRunning(status);
     } catch (e) {
       setError(String(e));
