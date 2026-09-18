@@ -505,7 +505,10 @@ fn flatten_staging(staged: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Refuse while any registered server runs from this exe (its args_preview starts with the path).
+/// Refuse while any llama-server runs from this exe. The registry check (args_preview) covers
+/// app-started servers and gives the port for the message; the process-table scan also catches
+/// externally started ones, whose args_preview is empty — without it, Windows would fail later
+/// with an opaque access-denied because a locked .exe blocks rename/remove.
 async fn assert_engine_free(state: &AppState, exe_lc: &str) -> Result<(), String> {
     let servers = state.servers.lock().await;
     for (port, entry) in servers.iter() {
@@ -515,6 +518,13 @@ async fn assert_engine_free(state: &AppState, exe_lc: &str) -> Result<(), String
                 port
             ));
         }
+    }
+    drop(servers);
+    let cmdlines = tokio::task::spawn_blocking(crate::engine::llama_server_cmdlines)
+        .await
+        .map_err(|e| e.to_string())?;
+    if cmdlines.iter().any(|c| c.to_lowercase().contains(exe_lc)) {
+        return Err("engine is in use by a running llama-server — stop it first".into());
     }
     Ok(())
 }
@@ -571,9 +581,10 @@ pub async fn install_build(
         .to_lowercase();
     assert_engine_free(&state, &exe_lc).await?;
 
-    let staged = root.join(format!("{dir_name}.new"));
-    // unique per install (pid + tag + backend + time) so concurrent or back-to-back installs of the
-    // same build never share a temp dir — even while a previous cleanup is still running.
+    // Both staging dirs are unique per attempt (pid + time) so concurrent or back-to-back installs
+    // of the same build never share one — even while a previous cleanup is still running. A shared
+    // `staged` dir let one install's remove_dir_all wipe another's in-progress extraction.
+    let staged = root.join(format!("{dir_name}.new-{}-{}", std::process::id(), crate::util::now_ms()));
     let tmpdir = std::env::temp_dir().join(format!(
         "chachaanteng-install-{}-{tag}-{}-{}",
         std::process::id(),
@@ -723,24 +734,7 @@ pub async fn validate_custom_engine(path: String) -> Result<serde_json::Value, S
 
 /// Find the first standalone "build <digits>" in llama.cpp --version output.
 fn extract_build_number(text: &str) -> Option<String> {
-    let lower = text.to_lowercase();
-    let bytes = lower.as_bytes();
-    let mut i = 0;
-    while i + 5 <= bytes.len() {
-        if &lower[i..i + 5] == "build" && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric()) {
-            let mut j = i + 5;
-            while j < bytes.len() && (bytes[j] as char).is_whitespace() {
-                j += 1;
-            }
-            let start = j;
-            while j < bytes.len() && bytes[j].is_ascii_digit() {
-                j += 1;
-            }
-            if j > start {
-                return Some(lower[start..j].to_string());
-            }
-        }
-        i += 1;
-    }
-    None
+    // Built per call — this runs once per engine validation, not on a hot path.
+    let re = regex::Regex::new(r"\bbuild\s+(\d+)").ok()?;
+    re.captures(&text.to_lowercase()).map(|c| c[1].to_string())
 }

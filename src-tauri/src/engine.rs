@@ -117,42 +117,49 @@ pub async fn launch_server(
 }
 
 /// Best-effort name of the process listening on `port` (for the occupied-port error message).
-/// Runs off the tokio workers — lsof / powershell duration is unbounded on a loaded system.
+/// Runs off the tokio workers with a hard timeout — powershell's cold start alone can add seconds
+/// to every occupied-port error, and the name is only cosmetic.
 async fn port_holder(port: u16) -> Option<String> {
-    tokio::task::spawn_blocking(move || {
-        #[cfg(not(windows))]
-        {
-            // -Fc emits one field per line prefixed by its letter; `c` = command name (full,
-            // not truncated like the default table view). First listener wins.
-            let out = std::process::Command::new("lsof")
-                .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fc"])
-                .output()
-                .ok()?;
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .find_map(|l| l.strip_prefix('c'))
-                .filter(|name| !name.is_empty())
-                .map(str::to_string)
-        }
-        #[cfg(windows)]
-        {
-            let out = std::process::Command::new("powershell.exe")
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    &format!(
-                        r#"(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess | ForEach-Object {{ (Get-Process -Id $_ -ErrorAction SilentlyContinue).Name }}"#
-                    ),
-                ])
-                .output()
-                .ok()?;
-            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            (!name.is_empty()).then_some(name)
-        }
-    })
-    .await
-    .ok()?
+    let probe = async move {
+        tokio::task::spawn_blocking(move || {
+            #[cfg(not(windows))]
+            {
+                // -Fc emits one field per line prefixed by its letter; `c` = command name (full,
+                // not truncated like the default table view). First listener wins.
+                let out = std::process::Command::new("lsof")
+                    .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fc"])
+                    .output()
+                    .ok()?;
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .find_map(|l| l.strip_prefix('c'))
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+            }
+            #[cfg(windows)]
+            {
+                let out = std::process::Command::new("powershell.exe")
+                    .args([
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        &format!(
+                            r#"(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess | ForEach-Object {{ (Get-Process -Id $_ -ErrorAction SilentlyContinue).Name }}"#
+                        ),
+                    ])
+                    .output()
+                    .ok()?;
+                let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                (!name.is_empty()).then_some(name)
+            }
+        })
+        .await
+        .ok()?
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(5), probe).await {
+        Ok(name) => name,
+        Err(_) => None, // probe timed out — the holder's name is best-effort only
+    }
 }
 
 async fn spawn_server(
@@ -517,6 +524,60 @@ fn enumerate_llama_server_processes() -> Vec<(u32, u16, String)> {
         .lines()
         .filter_map(parse_ps_line)
         .collect()
+}
+
+/// Full command lines of every running llama-server — including ones this app did not start.
+/// The server registry alone can't see external servers (their args_preview is empty), and on
+/// Windows a locked exe would otherwise surface later as an opaque access-denied on rename/remove.
+pub fn llama_server_cmdlines() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("powershell.exe");
+        crate::util::hide_console_std(&mut cmd);
+        let out = match cmd
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                r#"$p = @(Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" | Select-Object CommandLine); if ($p.Count) { ConvertTo-Json -InputObject $p }"#,
+            ])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+        // WMI/Select-Object emit PascalCase keys — serde matches case-sensitively by default.
+        #[derive(serde::Deserialize)]
+        struct CmdRow {
+            #[serde(rename = "CommandLine")]
+            commandline: Option<String>,
+        }
+        serde_json::from_str::<Vec<CmdRow>>(&String::from_utf8_lossy(&out.stdout))
+            .map(|rows| rows.into_iter().filter_map(|r| r.commandline).collect())
+            .unwrap_or_default()
+    }
+    #[cfg(not(windows))]
+    {
+        let out = match std::process::Command::new("ps")
+            .args(["-axww", "-o", "command="])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+        // argv[0] may contain spaces — walk the leading tokens up to the first flag and match the
+        // binary name as a path component (same rule as parse_ps_line).
+        let bin = crate::util::bin_name("llama-server");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|line| {
+                line.split(' ')
+                    .take_while(|t| !t.starts_with('-'))
+                    .any(|tok| std::path::Path::new(tok).file_name().and_then(|f| f.to_str()) == Some(bin.as_str()))
+            })
+            .map(str::to_string)
+            .collect()
+    }
 }
 
 #[cfg(test)]
