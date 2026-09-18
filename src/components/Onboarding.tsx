@@ -93,6 +93,24 @@ const STARTERS: Starter[] = [
 
 type Step = "engine" | "model";
 
+/** Hardware summary card — the engine step additionally shows the CPU row. */
+function HardwareCard({ data, gpus, showCpu = false }: { data: OnboardingData; gpus: string[]; showCpu?: boolean }) {
+  const t = useT();
+  return (
+    <div className="card card-border mb-4 p-3 bg-raised text-xs space-y-1">
+      <div className="font-semibold text-fg-bright mb-2">{t("ob.hardwareTitle")}</div>
+      {showCpu && (
+        <div><span className="text-fg-muted">{t("ob.cpu")}</span>{data.hardware.cpu_name}</div>
+      )}
+      <div><span className="text-fg-muted">{t("ob.ram")}</span>{data.hardware.ram_gb} GB</div>
+      <div>
+        <span className="text-fg-muted">{t("ob.gpu")}</span>
+        {gpus.length ? gpus.join("、") : t("ob.noGpu")}
+      </div>
+    </div>
+  );
+}
+
 export default function Onboarding({ onDone }: { onDone: () => void }) {
   const t = useT();
   const [step, setStep] = useState<Step>("engine");
@@ -215,16 +233,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
             <div className="text-fg-faint">{t("ob.detecting")}</div>
           ) : step === "engine" ? (
             <>
-              {/* Hardware card */}
-              <div className="card card-border mb-4 p-3 bg-raised text-xs space-y-1">
-                <div className="font-semibold text-fg-bright mb-2">{t("ob.hardwareTitle")}</div>
-                <div><span className="text-fg-muted">{t("ob.cpu")}</span>{data.hardware.cpu_name}</div>
-                <div><span className="text-fg-muted">{t("ob.ram")}</span>{data.hardware.ram_gb} GB</div>
-                <div>
-                  <span className="text-fg-muted">{t("ob.gpu")}</span>
-                  {gpus.length ? gpus.join("、") : t("ob.noGpu")}
-                </div>
-              </div>
+              <HardwareCard data={data} gpus={gpus} showCpu />
 
               {/* Build list */}
               <h2 className="mb-2 text-xs">
@@ -327,14 +336,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
           ) : (
             <>
               {/* Starter-model step */}
-              <div className="card card-border mb-4 p-3 bg-raised text-xs space-y-1">
-                <div className="font-semibold text-fg-bright mb-2">{t("ob.hardwareTitle")}</div>
-                <div><span className="text-fg-muted">{t("ob.ram")}</span>{data.hardware.ram_gb} GB</div>
-                <div>
-                  <span className="text-fg-muted">{t("ob.gpu")}</span>
-                  {gpus.length ? gpus.join("、") : t("ob.noGpu")}
-                </div>
-              </div>
+              <HardwareCard data={data} gpus={gpus} />
 
               <h2 className="mb-1">{t("ob.modelTitle")}</h2>
               <p className="text-fg-muted text-xs mb-3">
