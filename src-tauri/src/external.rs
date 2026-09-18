@@ -305,10 +305,10 @@ fn cred_target(host: &str, port: u16) -> String {
     format!("chachaanteng.external.{host}:{port}")
 }
 
-/// Persist (or clear, when `key` is empty) the API key for a remembered target. Best
-/// effort — an unavailable credential store must never fail a connect; it just means
-/// no auto-restore after a restart.
-fn store_api_key(host: &str, port: u16, key: &str) {
+/// Blocking credential-store write — always run via spawn_blocking from async commands. On macOS
+/// the first save can show a Keychain ACL prompt, and waiting on that user input must not freeze
+/// a tokio worker thread.
+fn store_api_key_blocking(host: &str, port: u16, key: &str) {
     let target = cred_target(host, port);
     if key.is_empty() {
         wincred::delete(&target);
@@ -317,9 +317,21 @@ fn store_api_key(host: &str, port: u16, key: &str) {
     }
 }
 
+/// Persist (or clear, when `key` is empty) the API key for a remembered target. Best
+/// effort — an unavailable credential store must never fail a connect; it just means
+/// no auto-restore after a restart.
+async fn store_api_key(host: &str, port: u16, key: &str) {
+    let (host, key) = (host.to_string(), key.to_string());
+    let _ = tokio::task::spawn_blocking(move || store_api_key_blocking(&host, port, &key)).await;
+}
+
 /// Read back a stored API key (None when absent or the store is unreadable).
-fn stored_api_key(host: &str, port: u16) -> Option<String> {
-    wincred::get(&cred_target(host, port))
+async fn stored_api_key(host: &str, port: u16) -> Option<String> {
+    let host = host.to_string();
+    tokio::task::spawn_blocking(move || wincred::get(&cred_target(&host, port)))
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Register an externally started llama-server as the chat target.
@@ -343,7 +355,7 @@ pub async fn external_connect(
     // EXCEPT when the server just rejected this key (401/403): storing a proven-bad key would
     // clobber whatever worked before and break auto-restore after the next restart.
     if status != 401 && status != 403 {
-        store_api_key(&host, port, &key);
+        store_api_key(&host, port, &key).await;
     }
     let target = ExternalTarget { host: host.clone(), port, label };
     *state.external.lock().await = Some(RegisteredServer::new(target.clone(), key));
@@ -370,7 +382,7 @@ pub async fn external_connect(
 pub async fn external_disconnect(state: State<'_, AppState>) -> Result<(), String> {
     let target = state.external.lock().await.take().map(|r| r.target);
     if let Some(t) = &target {
-        store_api_key(&t.host, t.port, "");
+        store_api_key(&t.host, t.port, "").await;
     }
     write_remembered(&state, None);
     Ok(())
@@ -398,7 +410,7 @@ pub async fn external_restore(state: State<'_, AppState>) -> Result<Option<Exter
         Some(r) => r,
         None => return Ok(None),
     };
-    let key = stored_api_key(&remembered.host, remembered.port).unwrap_or_default();
+    let key = stored_api_key(&remembered.host, remembered.port).await.unwrap_or_default();
     if remembered.api_key_required && key.is_empty() {
         // Key was needed at registration but is gone from the credential store — a
         // re-registered target would only 401. Manual reconnect (re-enter key) it is.
@@ -432,12 +444,17 @@ pub async fn external_store_key(host: String, port: u16, key: String) -> Result<
     let host = normalize_host(&host)?;
     let port = normalize_port(port)?;
     let key = normalize_api_key(&key)?;
-    if key.is_empty() {
-        wincred::delete(&cred_target(&host, port));
-    } else {
-        wincred::set(&cred_target(&host, port), &host, &key)?;
-    }
-    Ok(())
+    // spawn_blocking: on macOS the first save may show a Keychain ACL prompt (see store_api_key_blocking).
+    tokio::task::spawn_blocking(move || {
+        if key.is_empty() {
+            wincred::delete(&cred_target(&host, port));
+        } else {
+            wincred::set(&cred_target(&host, port), &host, &key)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Whether an API key is stored for this address in the OS credential store.
@@ -445,7 +462,7 @@ pub async fn external_store_key(host: String, port: u16, key: String) -> Result<
 pub async fn external_has_key(host: String, port: u16) -> Result<bool, String> {
     let host = normalize_host(&host)?;
     let port = normalize_port(port)?;
-    Ok(stored_api_key(&host, port).is_some())
+    Ok(stored_api_key(&host, port).await.is_some())
 }
 
 /// Bearer header for (host, port) when it matches the registered external server —
@@ -462,20 +479,19 @@ pub async fn auth_header(state: &AppState, host: &str, port: u16) -> Option<Stri
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// Round-trip through the real OS credential store (self-cleaning): proves keys are
     /// encrypted at rest by the OS and read back within this user's session. Windows-only —
     /// on macOS this would touch the real login keychain and can trigger an ACL prompt.
     #[cfg(windows)]
     #[test]
     fn api_key_roundtrip_via_credential_store() {
+        use super::{cred_target, store_api_key_blocking, wincred};
         const HOST: &str = "roundtrip-test.invalid"; // .invalid TLD — never resolves, no collision
         const PORT: u16 = 9;
-        store_api_key(HOST, PORT, ""); // start clean (idempotent)
-        store_api_key(HOST, PORT, "s3cret-key-🔑");
-        assert_eq!(stored_api_key(HOST, PORT).as_deref(), Some("s3cret-key-🔑"));
-        store_api_key(HOST, PORT, ""); // empty clears the entry
-        assert_eq!(stored_api_key(HOST, PORT), None);
+        store_api_key_blocking(HOST, PORT, ""); // start clean (idempotent)
+        store_api_key_blocking(HOST, PORT, "s3cret-key-🔑");
+        assert_eq!(wincred::get(&cred_target(HOST, PORT)).as_deref(), Some("s3cret-key-🔑"));
+        store_api_key_blocking(HOST, PORT, ""); // empty clears the entry
+        assert_eq!(wincred::get(&cred_target(HOST, PORT)), None);
     }
 }
