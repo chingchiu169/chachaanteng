@@ -359,14 +359,14 @@ export default function SettingsView({ visible = false }: { visible?: boolean })
   return (
     <div className="h-full flex flex-col">
       {/* category tabs — sections grouped like a settings sidebar, but as a tab bar */}
-      <div role="tablist" className="tabs tabs-border shrink-0 border-b border-line bg-surface px-3">
+      <div role="tablist" className="tabs tabs-border tabs-smshrink-0 border-b border-line bg-surface">
         {SETTINGS_TABS.map((x) => (
           <button
             key={x.id}
             role="tab"
             aria-selected={tab === x.id}
             onClick={() => setTab(x.id)}
-            className={`tab ${tab === x.id ? "tab-active" : ""}`}
+            className={`tab ${tab === x.id ? "tab-active" : ""} text-sm`}
           >
             {t(x.label)}
           </button>

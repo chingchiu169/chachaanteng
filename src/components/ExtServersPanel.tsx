@@ -159,7 +159,7 @@ export default function ExtServersPanel({ visible = false }: { visible?: boolean
     <section className="bg-surface p-3 space-y-2">
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
-          <div className="text-xs font-medium text-fg-bright">
+          <div className="text-xs font-medium text-fg-bright mb-2">
             {t("settings.extTitle")}
           </div>
           <p className="text-[11px] text-fg-muted mt-0.5">
