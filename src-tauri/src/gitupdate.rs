@@ -225,10 +225,14 @@ pub async fn git_pull() -> Result<GitPullResult, String> {
 
 /// Relaunch the current exe detached and exit — used after a successful pull so the new code runs.
 #[tauri::command]
-pub fn restart_app() -> Result<(), String> {
+pub fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = std::process::Command::new(&exe);
     crate::util::hide_console_std(&mut cmd);
     cmd.spawn().map_err(|e| format!("重新啟動失敗: {e}"))?;
-    std::process::exit(0);
+    // app.exit (not process::exit) so RunEvent::Exit fires and the cleanup handler kills any
+    // running servers/benchmarks/tunnels — a hard exit would orphan them (the tunnel keeps its
+    // public URL live with no PID recorded for the next session to reap).
+    app.exit(0);
+    Ok(())
 }
