@@ -113,9 +113,14 @@ pub struct Settings {
     pub model_meta: HashMap<String, serde_json::Value>,
 }
 
+/// Acquire the DB mutex, mapping a poisoned lock to an error string.
+fn lock_db<'s, 'a>(state: &'s State<'a, crate::AppState>) -> Result<std::sync::MutexGuard<'s, Db>, String> {
+    state.db.lock().map_err(|e| format!("db lock: {e}"))
+}
+
 #[tauri::command]
 pub async fn get_settings(state: State<'_, crate::AppState>) -> Result<Settings, String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     let json = db.get_setting("settings").map_err(|e| e.to_string())?;
     Ok(json.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
 }
@@ -126,7 +131,7 @@ pub async fn save_settings(
     settings: Settings,
 ) -> Result<(), String> {
     let json = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     db.set_setting("settings", &json).map_err(|e| e.to_string())
 }
 
@@ -150,21 +155,21 @@ fn json_object_setting(
 /// The persisted GLOBAL flag set — the base layer every launch config starts from.
 #[tauri::command]
 pub async fn get_flag_values(state: State<'_, crate::AppState>) -> Result<serde_json::Value, String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     Ok(serde_json::Value::Object(json_object_setting(&db, "flag_values")?))
 }
 
 #[tauri::command]
 pub async fn save_flag_values(state: State<'_, crate::AppState>, values: serde_json::Value) -> Result<(), String> {
     let json = serde_json::to_string(&values).map_err(|e| e.to_string())?;
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     db.set_setting("flag_values", &json).map_err(|e| e.to_string())
 }
 
 /// Sparse per-model overrides — one JSON row `{ [modelPath]: { flagId: value } }`.
 #[tauri::command]
 pub async fn get_model_overrides(state: State<'_, crate::AppState>) -> Result<serde_json::Value, String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     Ok(serde_json::Value::Object(json_object_setting(&db, "model_overrides")?))
 }
 
@@ -175,7 +180,7 @@ pub async fn set_model_override(
     model_path: String,
     overrides: serde_json::Value,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     let mut all = json_object_setting(&db, "model_overrides")?;
     if overrides.as_object().map(|o| o.is_empty()).unwrap_or(true) {
         all.remove(&model_path);
@@ -208,7 +213,7 @@ pub struct StoredMessage {
 
 #[tauri::command]
 pub async fn list_conversations(state: State<'_, crate::AppState>) -> Result<Vec<Conversation>, String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     let mut stmt = db
         .conn
         .prepare(
@@ -232,7 +237,7 @@ pub async fn list_conversations(state: State<'_, crate::AppState>) -> Result<Vec
 
 #[tauri::command]
 pub async fn get_messages(state: State<'_, crate::AppState>, conv_id: i64) -> Result<Vec<StoredMessage>, String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     let mut stmt = db
         .conn
         .prepare("SELECT role, content FROM messages WHERE conv_id = ?1 ORDER BY id ASC")
@@ -257,7 +262,7 @@ pub async fn save_conversation(
     model_path: Option<String>,
     params: Option<serde_json::Value>,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     let params_json = params.and_then(|p| serde_json::to_string(&p).ok());
     if id > 0 {
         db.conn
@@ -285,7 +290,7 @@ pub async fn append_message(
     role: String,
     content: String,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     db.conn
         .execute(
             "INSERT INTO messages (conv_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -301,7 +306,7 @@ pub async fn rename_conversation(
     id: i64,
     title: String,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     db.conn
         .execute("UPDATE conversations SET title = ?1 WHERE id = ?2", params![title, id])
         .map_err(|e| e.to_string())?;
@@ -312,7 +317,7 @@ pub async fn rename_conversation(
 /// 30-day auto-purge at app start; `purge_conversation` is the hard path.
 #[tauri::command]
 pub async fn delete_conversation(state: State<'_, crate::AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     db.conn
         .execute(
             "UPDATE conversations SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
@@ -333,7 +338,7 @@ pub struct TrashedConversation {
 
 #[tauri::command]
 pub async fn restore_conversation(state: State<'_, crate::AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     db.conn
         .execute(
             "UPDATE conversations SET deleted_at = NULL WHERE id = ?1 AND deleted_at IS NOT NULL",
@@ -346,7 +351,7 @@ pub async fn restore_conversation(state: State<'_, crate::AppState>, id: i64) ->
 /// Hard delete — the old irreversible path, now only reachable from the trash UI.
 #[tauri::command]
 pub async fn purge_conversation(state: State<'_, crate::AppState>, id: i64) -> Result<(), String> {
-    let mut db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let mut db = lock_db(&state)?;
     // One transaction — a failure between the two DELETEs must not orphan messages/conversation.
     let tx = db.conn.transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM messages WHERE conv_id = ?1", [id]).map_err(|e| e.to_string())?;
@@ -376,7 +381,7 @@ pub async fn search_conversations(
     }
     // Escape LIKE wildcards so user-typed % / _ match literally.
     let like = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     let mut stmt = db
         .conn
         .prepare(
@@ -428,7 +433,7 @@ fn snippet_window(content: &str, needle: &str) -> Option<String> {
 pub async fn list_trashed_conversations(
     state: State<'_, crate::AppState>,
 ) -> Result<Vec<TrashedConversation>, String> {
-    let db = state.db.lock().map_err(|e| format!("db lock: {e}"))?;
+    let db = lock_db(&state)?;
     let mut stmt = db
         .conn
         .prepare(
