@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export interface ComboOption {
+interface ComboOption {
   value: string;
   /** Secondary text shown after the value (e.g. a saved label). */
   hint?: string;

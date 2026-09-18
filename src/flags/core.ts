@@ -403,12 +403,12 @@ const SENSITIVE_CLI_FLAG_NAMES = Array.from(SENSITIVE_CLI_FLAGS);
 // ---------------------------------------------------------------------------
 
 /** Shell-quotes a single token for the copyable command preview. */
-export function quoteArg(arg: string): string {
+function quoteArg(arg: string): string {
   const text = String(arg);
   return /[\s"]/u.test(text) ? `"${text.replace(/"/g, '\\"')}"` : text;
 }
 
-export function redactSensitiveTokens(tokens: string[]): string[] {
+function redactSensitiveTokens(tokens: string[]): string[] {
   const redacted: string[] = [];
   let redactNext = false;
   for (const rawToken of tokens || []) {

@@ -1,4 +1,3 @@
-import { useApp } from "../store";
 import type { HfModelInfo } from "../types";
 import { hfModelInfo } from "./api";
 import { saveSettingsMerged } from "./settings-save";
