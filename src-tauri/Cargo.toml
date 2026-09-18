@@ -1,6 +1,6 @@
 [package]
 name = "chachaanteng"
-version = "0.2.0"
+version = "0.2.1"
 description = "ChaChaanTeng - manage llama.cpp on Windows and macOS"
 edition = "2021"
 
