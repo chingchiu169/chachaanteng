@@ -27,7 +27,20 @@ function syncBinaryTag(engines: { path: string; version: string | null }[], pref
   useFlags.getState().setBinaryTag(eng ? (eng.version ?? "custom") : "");
 }
 
-type Tab = "chat" | "quicklaunch" | "logs" | "models" | "benchmarks" | "monitor" | "configure" | "settings";
+/** Sidebar order; the main area renders views in this same order (hidden ones are display:none,
+    so DOM order has no visual effect). */
+const TABS = [
+  { id: "chat", icon: "fa-comment-dots", View: ChatView },
+  { id: "quicklaunch", icon: "fa-rocket", View: QuickLaunchView },
+  { id: "logs", icon: "fa-scroll", View: ServerLogsView },
+  { id: "configure", icon: "fa-sliders", View: ConfigureView },
+  { id: "models", icon: "fa-box", View: ModelsView },
+  { id: "benchmarks", icon: "fa-chart-column", View: BenchmarksView },
+  { id: "monitor", icon: "fa-desktop", View: MonitorView },
+  { id: "settings", icon: "fa-gear", View: SettingsView },
+] as const;
+
+type Tab = (typeof TABS)[number]["id"];
 
 function tabCls(active: boolean) {
   return `btn btn-xs w-full justify-start gap-2 shadow-none border ${
@@ -107,30 +120,11 @@ export default function App() {
       <ResizeHandles />
       <div className="flex-1 min-h-0 flex">
         <aside className={`w-48 shrink-0 border-r border-line bg-surface px-3 pb-3 pt-2 flex flex-col gap-1`}>
-          <button onClick={() => setTab("chat")} className={tabCls(tab === "chat")}>
-            <i className="fa-solid fa-comment-dots" aria-hidden /> {t("tab.chat")}
-          </button>
-          <button onClick={() => setTab("quicklaunch")} className={tabCls(tab === "quicklaunch")}>
-            <i className="fa-solid fa-rocket" aria-hidden /> {t("tab.quicklaunch")}
-          </button>
-          <button onClick={() => setTab("logs")} className={tabCls(tab === "logs")}>
-            <i className="fa-solid fa-scroll" aria-hidden /> {t("tab.logs")}
-          </button>
-          <button onClick={() => setTab("configure")} className={tabCls(tab === "configure")}>
-            <i className="fa-solid fa-sliders" aria-hidden /> {t("tab.configure")}
-          </button>
-          <button onClick={() => setTab("models")} className={tabCls(tab === "models")}>
-            <i className="fa-solid fa-box" aria-hidden /> {t("tab.models")}
-          </button>
-          <button onClick={() => setTab("benchmarks")} className={tabCls(tab === "benchmarks")}>
-            <i className="fa-solid fa-chart-column" aria-hidden /> {t("tab.benchmarks")}
-          </button>
-          <button onClick={() => setTab("monitor")} className={tabCls(tab === "monitor")}>
-            <i className="fa-solid fa-desktop" aria-hidden /> {t("tab.monitor")}
-          </button>
-          <button onClick={() => setTab("settings")} className={tabCls(tab === "settings")}>
-            <i className="fa-solid fa-gear" aria-hidden /> {t("tab.settings")}
-          </button>
+          {TABS.map((x) => (
+            <button key={x.id} onClick={() => setTab(x.id)} className={tabCls(tab === x.id)}>
+              <i className={`fa-solid ${x.icon}`} aria-hidden /> {t(`tab.${x.id}`)}
+            </button>
+          ))}
           {/* Live per-server cards — pinned to the bottom of the menu, visible from any page */}
           <div className="flex-1" />
           <SidebarServerCard />
@@ -145,30 +139,11 @@ export default function App() {
             scroll position, in-flight UI) survives page switches like real desktop tabs. Each
             view gates its polling and window listeners on `visible` so hidden pages do no work. */}
         <main className="flex-1 overflow-hidden bg-base">
-          <div className={tab === "chat" ? "h-full" : "hidden"}>
-            <ChatView visible={tab === "chat"} />
-          </div>
-          <div className={tab === "quicklaunch" ? "h-full" : "hidden"}>
-            <QuickLaunchView visible={tab === "quicklaunch"} />
-          </div>
-          <div className={tab === "logs" ? "h-full" : "hidden"}>
-            <ServerLogsView visible={tab === "logs"} />
-          </div>
-          <div className={tab === "models" ? "h-full" : "hidden"}>
-            <ModelsView visible={tab === "models"} />
-          </div>
-          <div className={tab === "benchmarks" ? "h-full" : "hidden"}>
-            <BenchmarksView visible={tab === "benchmarks"} />
-          </div>
-          <div className={tab === "monitor" ? "h-full" : "hidden"}>
-            <MonitorView visible={tab === "monitor"} />
-          </div>
-          <div className={tab === "configure" ? "h-full" : "hidden"}>
-            <ConfigureView visible={tab === "configure"} />
-          </div>
-          <div className={tab === "settings" ? "h-full" : "hidden"}>
-            <SettingsView visible={tab === "settings"} />
-          </div>
+          {TABS.map((x) => (
+            <div key={x.id} className={tab === x.id ? "h-full" : "hidden"}>
+              <x.View visible={tab === x.id} />
+            </div>
+          ))}
         </main>
       </div>
     </div>
