@@ -30,7 +30,7 @@ import {
   writeTextFile,
 } from "../lib/api";
 import type { AttachmentData, ConversationMeta, ConvSearchHit, ExternalTarget, SearchResult, StreamToken, TrashedMeta } from "../lib/api";
-import { convToJson, convToMarkdown } from "../lib/conv-export";
+import { convToJson, convToMarkdown, parseParts } from "../lib/conv-export";
 import { Markdown, splitReasoningFromContent } from "../lib/markdown";
 import { modelDisplayName } from "../lib/model-aliases";
 import { loadSavedExt, persistSavedExt, upsertSavedExt, type SavedExt } from "../lib/saved-ext";
@@ -65,18 +65,7 @@ const contentText = (c: string | ChatContentPart[]): string =>
   typeof c === "string" ? c : c.filter((p) => p.type === "text").map((p) => p.text).join("\n");
 
 /** Stored message content may be a JSON parts array (multimodal user turns); parse it back. */
-const parseStoredContent = (raw: string): string | ChatContentPart[] => {
-  if (!raw.startsWith("[")) return raw;
-  try {
-    const v: unknown = JSON.parse(raw);
-    if (Array.isArray(v) && v.length > 0 && v.every((p) => p && typeof p === "object" && ("text" in p || "image_url" in p))) {
-      return v as ChatContentPart[];
-    }
-  } catch {
-    /* not JSON — plain text that happens to start with "[" */
-  }
-  return raw;
-};
+const parseStoredContent = (raw: string): string | ChatContentPart[] => parseParts(raw) ?? raw;
 
 /** Combine streamed reasoning + content into the stored format (leading think block). */
 function combineReasoning(reasoning: string, content: string): string {

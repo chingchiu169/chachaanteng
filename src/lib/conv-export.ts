@@ -1,23 +1,29 @@
 import type { ConversationMeta, StoredMessage } from "./api";
+import type { ChatContentPart } from "../types";
 
-/** Plain text of a stored message — JSON parts arrays (multimodal user turns) yield their text
- *  parts plus an [image] marker per image; everything else is already plain text. */
-export function storedText(content: string): string {
-  if (!content.startsWith("[")) return content;
+/** Stored user turns may be a JSON parts array (multimodal); validate and parse it, else null. */
+export function parseParts(raw: string): ChatContentPart[] | null {
+  if (!raw.startsWith("[")) return null;
   try {
-    const v: unknown = JSON.parse(content);
+    const v: unknown = JSON.parse(raw);
     if (Array.isArray(v) && v.length > 0 && v.every((p) => p && typeof p === "object" && ("text" in p || "image_url" in p))) {
-      return v
-        .map((p: Record<string, unknown>) =>
-          p.type === "image_url" ? "[image]" : typeof p.text === "string" ? p.text : "",
-        )
-        .filter(Boolean)
-        .join("\n");
+      return v as ChatContentPart[];
     }
   } catch {
     /* not JSON — plain text that happens to start with "[" */
   }
-  return content;
+  return null;
+}
+
+/** Plain text of a stored message — JSON parts arrays (multimodal user turns) yield their text
+ *  parts plus an [image] marker per image; everything else is already plain text. */
+export function storedText(content: string): string {
+  const parts = parseParts(content);
+  if (!parts) return content;
+  return parts
+    .map((p) => (p.type === "image_url" ? "[image]" : typeof p.text === "string" ? p.text : ""))
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** Markdown export: title/model/date header + role-labeled messages (raw transcript from the DB). */
